@@ -1,0 +1,103 @@
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from django.core.mail import send_mail
+from django.conf import settings
+import random
+import string
+from .models import StaffApplication, User
+
+
+def generate_password(length=10):
+    characters = string.ascii_letters + string.digits + '!@#$%'
+    return ''.join(random.choices(characters, k=length))
+
+
+@receiver(post_save, sender=StaffApplication)
+def handle_application_approval(sender, instance, created, **kwargs):
+    print(f"🔔 SIGNAL FIRED - status: {instance.status}, created: {created}")
+
+    # skip brand new applications
+    if created:
+        print("⏭️ New application — skipping")
+        return
+
+    # ── Approved ──────────────────────────────────────────────────────────────
+    if instance.status == 'APPROVED':
+
+        # dont create duplicate accounts
+        if User.objects.filter(email=instance.email).exists():
+            print("⚠️ User already exists — skipping account creation")
+            return
+
+        # generate credentials
+        username = instance.email.split('@')[0]
+        password = generate_password()
+
+        # create user account
+        User.objects.create_user(
+            username   = username,
+            email      = instance.email,
+            password   = password,
+            phone      = instance.phone,
+            role       = instance.role_applied,
+            first_name = instance.full_name.split()[0],
+            last_name  = ' '.join(instance.full_name.split()[1:]),
+        )
+
+        # send approval email with credentials
+        send_mail(
+            subject    = 'Your Campus Food Account is Approved! 🎉',
+            message    = f'''Hi {instance.full_name},
+
+Great news! Your application has been approved.
+
+Here are your login credentials:
+
+    Username : {username}
+    Password : {password}
+
+Login at: http://localhost:8000/login/
+
+Please change your password after your first login for security.
+
+Regards,
+Campus Food Team''',
+            from_email     = settings.DEFAULT_FROM_EMAIL,
+            recipient_list = [instance.email],
+            fail_silently  = False,
+        )
+
+        print(f"✅ Account created for {instance.full_name} ({instance.role_applied})")
+        print(f"   Username : {username}")
+        print(f"   Password : {password}")
+
+    # ── Rejected ──────────────────────────────────────────────────────────────
+    elif instance.status == 'REJECTED':
+
+        # send rejection email
+        send_mail(
+            subject    = 'Update on your Campus Food Application',
+            message    = f'''Hi {instance.full_name},
+
+Thank you for applying to Campus Food.
+
+Unfortunately your application as {instance.get_role_applied_display()} 
+has not been approved at this time.
+
+Reason: {instance.admin_notes if instance.admin_notes else 'Not specified'}
+
+If you believe this is a mistake or have questions, 
+please contact the campus admin.
+
+Regards,
+Campus Food Team''',
+            from_email     = settings.DEFAULT_FROM_EMAIL,
+            recipient_list = [instance.email],
+            fail_silently  = False,
+        )
+
+        print(f"❌ Rejection email sent to {instance.full_name}")
+
+    # ── Pending ───────────────────────────────────────────────────────────────
+    else:
+        print(f"⏳ Status is PENDING — no action taken")

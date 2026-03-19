@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block title %}Login — Campus Food{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-5">
+        <div class="card p-4 mt-5">
+            <h3 class="text-center mb-4">Welcome Back 👋</h3>
+            <form method="POST">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label">Username</label>
+                    <input type="text" name="username" class="form-control" required autofocus>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input type="password" name="password" class="form-control" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100">Login</button>
+
+            </form>
+            <div class="text-center mt-2">
+    <a href="{% url 'password_reset' %}" class="text-muted small">
+        Forgot your password?
+    </a>
+</div>
+            <hr>
+            <p class="text-center mb-0">
+                New student? <a href="{% url 'register' %}">Register here</a>
+            </p>
+            <p class="text-center mb-0 mt-2">
+                Vendor or Delivery? <a href="{% url 'apply' %}">Apply here</a>
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,156 @@
+{% extends 'base.html' %}
+{% block title %}Apply — Campus Food{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-7">
+        <div class="card p-4 mt-4">
+            <h3 class="text-center mb-1">Staff Application</h3>
+            <p class="text-center text-muted mb-4">
+                Apply to become a Vendor or Delivery Personnel
+            </p>
+            <form method="POST" enctype="multipart/form-data">
+                {% csrf_token %}
+
+                <!-- Role Selection -->
+                <div class="mb-4">
+                    <label class="form-label fw-bold">Applying As</label>
+                    <select name="role_applied" id="role_select" class="form-select" required>
+                        <option value="">-- Select Role --</option>
+                        <option value="VENDOR">Vendor (Food Outlet)</option>
+                        <option value="DELIVERY">Delivery Personnel</option>
+                    </select>
+                </div>
+
+                <!-- Personal Details -->
+                <h6 class="text-muted mb-3">Personal Details</h6>
+                <div class="mb-3">
+                    <label class="form-label">Full Name</label>
+                    <input type="text" name="full_name" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Email</label>
+                    <input type="email" name="email" class="form-control" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Phone</label>
+                    <input type="tel" name="phone" class="form-control"
+                           pattern="[0-9]{10}" maxlength="10" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Aadhaar Number</label>
+                    <input type="text" name="aadhaar_number" class="form-control"
+                           pattern="[0-9]{12}" maxlength="12" required>
+                </div>
+                <div class="mb-4">
+                    <label class="form-label">Aadhaar Document</label>
+                    <input type="file" name="aadhaar_document" class="form-control"
+                           accept=".pdf,.jpg,.jpeg,.png" required>
+                </div>
+
+                <!-- Vendor Fields -->
+                <div id="vendor_fields" style="display:none;">
+                    <h6 class="text-muted mb-3">Outlet Details</h6>
+                    <div class="mb-3">
+                        <label class="form-label">Outlet Name</label>
+                        <input type="text" name="outlet_name" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Outlet Location on Campus</label>
+                        <input type="text" name="outlet_location" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cuisine Type</label>
+                        <input type="text" name="cuisine_type" class="form-control"
+                               placeholder="e.g. North Indian, Fast Food, Beverages">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Operating Hours</label>
+                        <input type="text" name="operating_hours" class="form-control"
+                               placeholder="e.g. 9AM - 9PM">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">FSSAI License Number</label>
+                        <input type="text" name="fssai_license" class="form-control"
+                               maxlength="14">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">FSSAI Document</label>
+                        <input type="file" name="fssai_document" class="form-control"
+                               accept=".pdf,.jpg,.jpeg,.png">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">GST Number</label>
+                        <input type="text" name="gst_number" class="form-control"
+                               maxlength="15">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">College NOC Document</label>
+                        <input type="file" name="college_noc" class="form-control"
+                               accept=".pdf,.jpg,.jpeg,.png">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Bank Account Number</label>
+                        <input type="text" name="bank_account" class="form-control">
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label">IFSC Code</label>
+                        <input type="text" name="ifsc_code" class="form-control"
+                               maxlength="11">
+                    </div>
+                </div>
+
+                <!-- Delivery Fields -->
+                <div id="delivery_fields" style="display:none;">
+                    <h6 class="text-muted mb-3">Vehicle Details</h6>
+                    <div class="mb-3">
+                        <label class="form-label">Vehicle Type</label>
+                        <select name="vehicle_type" class="form-select">
+                            <option value="">-- Select --</option>
+                            <option value="Bicycle">Bicycle</option>
+                            <option value="Scooter">Scooter</option>
+                            <option value="Motorcycle">Motorcycle</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Vehicle Number</label>
+                        <input type="text" name="vehicle_number" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Driving License Number</label>
+                        <input type="text" name="driving_license" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Driving License Document</label>
+                        <input type="file" name="driving_license_document" class="form-control"
+                               accept=".pdf,.jpg,.jpeg,.png">
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label">Emergency Contact Number</label>
+                        <input type="tel" name="emergency_contact" class="form-control"
+                               pattern="[0-9]{10}" maxlength="10">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">Submit Application</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // show/hide vendor or delivery fields based on role selection
+    document.getElementById('role_select').addEventListener('change', function() {
+        document.getElementById('vendor_fields').style.display   = 'none'
+        document.getElementById('delivery_fields').style.display = 'none'
+
+        if (this.value === 'VENDOR') {
+            document.getElementById('vendor_fields').style.display = 'block'
+        } else if (this.value === 'DELIVERY') {
+            document.getElementById('delivery_fields').style.display = 'block'
+        }
+    })
+</script>
+{% endblock %}
