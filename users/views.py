@@ -1,8 +1,107 @@
-from django.shortcuts import render, redirect
+from decimal import Decimal, InvalidOperation
+from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.conf import settings
-from .models import User, StaffApplication
+from django.core.mail import send_mail
+from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
+from django.utils import timezone
+from .models import (
+    User,
+    StaffApplication,
+    VendorProfile,
+    MenuItem,
+    Order,
+    OrderItem,
+    Notification,
+    Cart,
+    CartItem,
+    Payment,
+    DeliveryAssignment,
+    DeliveryBroadcast,
+    DeliveryBroadcastResponse,
+    OrderTracking,
+)
+
+import json
+import urllib.parse
+import urllib.request
+import razorpay
+from datetime import timedelta
+
+
+def _generate_google_maps_link_from_address(address: str) -> tuple[str, str]:
+    """
+    Convert a free-form address into a Google Maps link using Geocoding API.
+    """
+    address = (address or "").strip()
+    if not address:
+        raise ValueError("Address is required")
+
+    api_key = getattr(settings, "GOOGLE_MAPS_API_KEY", "")
+    if not api_key:
+        raise ValueError("Google Maps API key is not configured")
+
+    query = urllib.parse.urlencode({"address": address, "key": api_key})
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?{query}"
+
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+
+    if payload.get("status") != "OK":
+        # Examples: OVER_QUERY_LIMIT, REQUEST_DENIED, ZERO_RESULTS
+        detail = payload.get("error_message") or payload.get("results") or ""
+        if detail:
+            raise ValueError(f"Geocoding failed: {payload.get('status')} ({detail})")
+        raise ValueError(f"Geocoding failed: {payload.get('status')}")
+
+    results = payload.get("results") or []
+    if not results:
+        raise ValueError("No matching location found for the given address")
+
+    loc = (results[0].get("geometry") or {}).get("location") or {}
+    lat = loc.get("lat")
+    lng = loc.get("lng")
+    if lat is None or lng is None:
+        raise ValueError("Geocoding returned no coordinates")
+
+    # Using a "search link" style similar to what map-based apps generate.
+    maps_link = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+    formatted_address = results[0].get("formatted_address") or address
+    return maps_link, formatted_address
+
+
+def _reverse_geocode_lat_lng(lat: float, lng: float) -> tuple[str, str]:
+    """
+    Convert coordinates into a Google Maps search link + formatted address using Geocoding API.
+    """
+    api_key = getattr(settings, "GOOGLE_MAPS_API_KEY", "")
+    if not api_key:
+        raise ValueError("Google Maps API key is not configured")
+
+    query = urllib.parse.urlencode({"latlng": f"{lat},{lng}", "key": api_key})
+    url = f"https://maps.googleapis.com/maps/api/geocode/json?{query}"
+
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+
+    if payload.get("status") != "OK":
+        detail = payload.get("error_message") or payload.get("results") or ""
+        if detail:
+            raise ValueError(f"Geocoding failed: {payload.get('status')} ({detail})")
+        raise ValueError(f"Geocoding failed: {payload.get('status')}")
+
+    results = payload.get("results") or []
+    if not results:
+        raise ValueError("No matching location found for the given coordinates")
+
+    formatted_address = results[0].get("formatted_address") or ""
+    maps_link = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+    return maps_link, formatted_address
 
 
 # ─── Register (Students Only) ─────────────────────────────────────────────────
@@ -121,12 +220,1277 @@ def pending_view(request):
     return render(request, 'users/pending.html')
 
 
-# ─── Placeholder Dashboards (built later) ────────────────────────────────────
+# ─── Dashboards ──────────────────────────────────────────────────────────────
 def student_dashboard(request):
-    return render(request, 'student/dashboard.html')
+    # Keep this page accessible even when logged out (existing tests rely on it).
+    notifications = []
+    if request.user.is_authenticated:
+        notifications = Notification.objects.filter(recipient=request.user).order_by('-created_at')[:50]
+    return render(request, 'student/dashboard.html', {'notifications': notifications})
 
+
+@login_required
 def vendor_dashboard(request):
-    return render(request, 'vendor/dashboard.html')
+    if request.user.role != User.Role.VENDOR:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
 
+    vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+
+    incoming_tickets = (
+        Order.objects.filter(
+            vendor=vendor_profile,
+            vendor_decision=Order.VendorDecision.PENDING,
+        )
+        .select_related('student', 'vendor')
+        .prefetch_related('items')
+        .order_by('-created_at')[:50]
+    )
+
+    accepted_orders = (
+        Order.objects.filter(
+            vendor=vendor_profile,
+            vendor_decision=Order.VendorDecision.ACCEPTED,
+        )
+        .select_related('student', 'vendor')
+        .prefetch_related('items')
+        .order_by('-created_at')[:50]
+    )
+
+    menu_items = MenuItem.objects.filter(vendor=vendor_profile, is_active=True).order_by('-updated_at')[:50]
+
+    return render(
+        request,
+        'vendor/dashboard.html',
+        {
+            'vendor_profile': vendor_profile,
+            'incoming_tickets': incoming_tickets,
+            'accepted_orders': accepted_orders,
+            'menu_items': menu_items,
+            'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
+        },
+    )
+
+
+@login_required
 def delivery_dashboard(request):
-    return render(request, 'delivery/dashboard.html')
+    """
+    Display delivery partner dashboard with available broadcasts and active assignments.
+    """
+    if request.user.role != User.Role.DELIVERY:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    # Get all active broadcasts that this partner hasn't responded to
+    active_broadcasts = DeliveryBroadcast.objects.filter(
+        status=DeliveryBroadcast.BroadcastStatus.ACTIVE
+    ).select_related('order', 'order__vendor', 'order__student')
+    
+    # Get broadcast responses from this partner
+    my_responses = DeliveryBroadcastResponse.objects.filter(
+        delivery_partner=request.user
+    ).values('broadcast_id', 'status')
+    response_dict = {r['broadcast_id']: r['status'] for r in my_responses}
+    
+    # Filter out ones partner has already responded to
+    available = []
+    for broadcast in active_broadcasts:
+        if broadcast.id not in response_dict or response_dict[broadcast.id] == DeliveryBroadcastResponse.ResponseStatus.PENDING:
+            available.append(broadcast)
+    
+    # Get accepted deliveries
+    my_accepted = DeliveryAssignment.objects.filter(
+        delivery_partner=request.user,
+        status__in=[
+            DeliveryAssignment.AssignmentStatus.ACCEPTED,
+            DeliveryAssignment.AssignmentStatus.PICKED_UP,
+            DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY,
+        ]
+    ).select_related('order', 'order__vendor', 'order__student')
+    
+    return render(request, 'delivery/dashboard.html', {
+        'broadcasts': available,
+        'my_deliveries': my_accepted,
+    })
+
+
+# ─── Vendor Actions ─────────────────────────────────────────────────────────
+@login_required
+def vendor_update_location(request):
+    if request.user.role != User.Role.VENDOR:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    if request.method != 'POST':
+        return redirect('vendor_dashboard')
+
+    vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+    vendor_profile.outlet_name = request.POST.get('outlet_name', vendor_profile.outlet_name).strip()
+    vendor_profile.google_maps_location = request.POST.get(
+        'google_maps_location', vendor_profile.google_maps_location
+    ).strip()
+    vendor_profile.google_maps_address = request.POST.get(
+        'google_maps_address', vendor_profile.google_maps_address
+    ).strip()
+    vendor_profile.save()
+
+    messages.success(request, 'Location saved successfully.')
+    return redirect('vendor_dashboard')
+
+
+@login_required
+def vendor_menu_add(request):
+    if request.user.role != User.Role.VENDOR:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    if request.method != 'POST':
+        return redirect('vendor_dashboard')
+
+    vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+
+    name = request.POST.get('name', '').strip()
+    description = request.POST.get('description', '').strip()
+    price_raw = request.POST.get('price', '').strip()
+    photo = request.FILES.get('photo')
+
+    if not name or not price_raw:
+        messages.error(request, 'Menu item name and price are required.')
+        return redirect('vendor_dashboard')
+
+    try:
+        price = Decimal(price_raw)
+    except (InvalidOperation, ValueError):
+        messages.error(request, 'Invalid price value.')
+        return redirect('vendor_dashboard')
+
+    MenuItem.objects.create(
+        vendor=vendor_profile,
+        name=name,
+        description=description,
+        price=price,
+        photo=photo,
+    )
+
+    messages.success(request, 'Menu item added.')
+    return redirect('vendor_dashboard')
+
+
+@login_required
+def vendor_menu_update(request, item_id: int):
+    if request.user.role != User.Role.VENDOR:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    if request.method != 'POST':
+        return redirect('vendor_dashboard')
+
+    vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+    item = get_object_or_404(MenuItem, pk=item_id, vendor=vendor_profile)
+
+    name = request.POST.get('name', item.name).strip()
+    description = request.POST.get('description', item.description).strip()
+    price_raw = request.POST.get('price', '').strip()
+
+    if price_raw:
+        try:
+            item.price = Decimal(price_raw)
+        except (InvalidOperation, ValueError):
+            messages.error(request, 'Invalid price value.')
+            return redirect('vendor_dashboard')
+
+    item.name = name
+    item.description = description
+
+    photo = request.FILES.get('photo')
+    if photo:
+        item.photo = photo
+
+    is_active_raw = request.POST.get('is_active')
+    if is_active_raw is not None:
+        item.is_active = is_active_raw == 'true'
+
+    item.save()
+    messages.success(request, 'Menu item updated.')
+    return redirect('vendor_dashboard')
+
+
+def _safe_send_email(subject: str, message: str, recipient_email: str):
+    """
+    Best-effort email sender. Failures shouldn't break vendor workflows.
+    """
+    if not recipient_email:
+        return
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[recipient_email],
+            fail_silently=True,
+        )
+    except Exception:
+        pass
+
+
+@login_required
+def vendor_ticket_accept(request, order_id: int):
+    if request.user.role != User.Role.VENDOR:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+
+    vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+    order = get_object_or_404(Order, pk=order_id, vendor=vendor_profile)
+
+    if order.vendor_decision != Order.VendorDecision.PENDING:
+        messages.error(request, 'This ticket has already been decided.')
+        return redirect('vendor_dashboard')
+
+    order.vendor_decision = Order.VendorDecision.ACCEPTED
+    order.vendor_status = Order.VendorStatus.NOT_STARTED
+    order.save()
+
+    message = f"Your order {order.order_code or order.id} has been accepted by the vendor."
+    Notification.objects.create(recipient=order.student, order=order, message=message)
+    _safe_send_email(
+        subject='Order Accepted',
+        message=message,
+        recipient_email=order.student.email,
+    )
+
+    messages.success(request, 'Ticket accepted. Student has been notified.')
+    return redirect('vendor_dashboard')
+
+
+@login_required
+def vendor_ticket_reject(request, order_id: int):
+    if request.user.role != User.Role.VENDOR:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+
+    vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+    order = get_object_or_404(Order, pk=order_id, vendor=vendor_profile)
+
+    if order.vendor_decision != Order.VendorDecision.PENDING:
+        messages.error(request, 'This ticket has already been decided.')
+        return redirect('vendor_dashboard')
+
+    order.vendor_decision = Order.VendorDecision.REJECTED
+    order.vendor_status = Order.VendorStatus.CANCELLED
+    order.save()
+
+    message = f"Your order {order.order_code or order.id} has been rejected by the vendor."
+    Notification.objects.create(recipient=order.student, order=order, message=message)
+    _safe_send_email(
+        subject='Order Rejected',
+        message=message,
+        recipient_email=order.student.email,
+    )
+
+    messages.success(request, 'Ticket rejected. Student has been notified.')
+    return redirect('vendor_dashboard')
+
+
+@login_required
+def vendor_order_status_update(request, order_id: int):
+    if request.user.role != User.Role.VENDOR:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    if request.method != 'POST':
+        return redirect('vendor_dashboard')
+
+    vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+    order = get_object_or_404(Order, pk=order_id, vendor=vendor_profile)
+
+    if order.vendor_decision != Order.VendorDecision.ACCEPTED:
+        messages.error(request, 'You can only update status for accepted tickets.')
+        return redirect('vendor_dashboard')
+
+    new_status = request.POST.get('vendor_status', '').strip()
+    valid = {c[0] for c in Order.VendorStatus.choices}
+    if new_status not in valid:
+        messages.error(request, 'Invalid status update.')
+        return redirect('vendor_dashboard')
+
+    order.vendor_status = new_status
+    order.save()
+
+    message = (
+        f"Your order {order.order_code or order.id} status updated to: "
+        f"{order.get_vendor_status_display()}."
+    )
+    Notification.objects.create(recipient=order.student, order=order, message=message)
+    _safe_send_email(
+        subject='Order Status Updated',
+        message=message,
+        recipient_email=order.student.email,
+    )
+
+    messages.success(request, 'Order status updated. Student has been notified.')
+    return redirect('vendor_dashboard')
+
+
+@login_required
+def vendor_generate_google_maps_link(request):
+    if request.user.role != User.Role.VENDOR:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    if request.method != 'POST':
+        return redirect('vendor_dashboard')
+
+    vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+    address = request.POST.get('geocode_address', '')
+
+    try:
+        maps_link, formatted_address = _generate_google_maps_link_from_address(address)
+    except Exception as e:
+        messages.error(request, f'Could not generate maps link: {e}')
+        return redirect('vendor_dashboard')
+
+    vendor_profile.google_maps_location = maps_link
+    vendor_profile.google_maps_address = formatted_address
+    vendor_profile.save()
+    messages.success(request, 'Google Maps link generated successfully.')
+    return redirect('vendor_dashboard')
+
+
+@login_required
+def vendor_reverse_geocode_location(request):
+    if request.user.role != User.Role.VENDOR:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+
+    # Support both form-encoded POST and JSON body POST.
+    lat = None
+    lng = None
+    try:
+        if request.body:
+            body = json.loads(request.body.decode('utf-8'))
+            lat = body.get('lat')
+            lng = body.get('lng')
+    except Exception:
+        pass
+
+    if lat is None or lng is None:
+        lat = request.POST.get('lat')
+        lng = request.POST.get('lng')
+
+    try:
+        lat = float(lat)
+        lng = float(lng)
+    except (TypeError, ValueError):
+        return JsonResponse({'error': 'Invalid lat/lng'}, status=400)
+
+    try:
+        maps_link, formatted_address = _reverse_geocode_lat_lng(lat, lng)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+    return JsonResponse(
+        {
+            'lat': lat,
+            'lng': lng,
+            'address': formatted_address,
+            'maps_link': maps_link,
+        }
+    )
+
+
+# ─── Student Views - Vendor Discovery & Ordering ──────────────────────────────
+
+@login_required
+def student_vendors_list(request):
+    """Display all active vendors for student discovery."""
+    if request.user.role != User.Role.STUDENT:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    vendors = VendorProfile.objects.filter(user__role=User.Role.VENDOR).order_by('outlet_name')
+    cart = Cart.objects.filter(student=request.user).first()
+    cart_count = cart.items.count() if cart else 0
+    
+    return render(request, 'student/vendors_list.html', {
+        'vendors': vendors,
+        'cart_count': cart_count,
+    })
+
+
+@login_required
+def student_vendor_detail(request, vendor_id: int):
+    """Display vendor profile with menu items."""
+    if request.user.role != User.Role.STUDENT:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    vendor = get_object_or_404(VendorProfile, id=vendor_id)
+    menu_items = MenuItem.objects.filter(vendor=vendor, is_active=True).order_by('-created_at')
+    
+    cart = Cart.objects.filter(student=request.user).first()
+    cart_count = cart.items.count() if cart else 0
+    
+    # Get cart items for this vendor to show quantities in menu
+    cart_items_dict = {}
+    if cart:
+        cart_items_dict = {
+            ci.menu_item_id: ci.quantity for ci in cart.items.filter(menu_item__vendor=vendor)
+        }
+    
+    return render(request, 'student/vendor_detail.html', {
+        'vendor': vendor,
+        'menu_items': menu_items,
+        'cart_items_dict': cart_items_dict,
+        'cart_count': cart_count,
+        'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def student_add_to_cart(request, item_id: int):
+    """Add menu item to cart."""
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    menu_item = get_object_or_404(MenuItem, id=item_id, is_active=True)
+    quantity = request.POST.get('quantity', '1')
+    
+    try:
+        quantity = int(quantity)
+        if quantity < 1:
+            return JsonResponse({'error': 'Quantity must be at least 1'}, status=400)
+    except ValueError:
+        return JsonResponse({'error': 'Invalid quantity'}, status=400)
+    
+    cart, _ = Cart.objects.get_or_create(student=request.user)
+    cart_item, created = CartItem.objects.get_or_create(
+        cart=cart,
+        menu_item=menu_item,
+        defaults={'quantity': quantity}
+    )
+    
+    if not created:
+        cart_item.quantity = quantity
+        cart_item.save()
+    
+    return JsonResponse({
+        'success': True,
+        'message': f'Added {menu_item.name} to cart',
+        'cart_count': cart.items.count(),
+    })
+
+
+@login_required
+def student_view_cart(request):
+    """Display shopping cart with items from multiple vendors."""
+    if request.user.role != User.Role.STUDENT:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    cart, _ = Cart.objects.get_or_create(student=request.user)
+    vendor_groups = cart.get_vendor_groups()
+    total = cart.get_total()
+    
+    return render(request, 'student/cart.html', {
+        'cart': cart,
+        'vendor_groups': vendor_groups,
+        'total': total,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def student_remove_from_cart(request, item_id: int):
+    """Remove item from cart."""
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    cart = get_object_or_404(Cart, student=request.user)
+    cart_item = get_object_or_404(CartItem, id=item_id, cart=cart)
+    cart_item.delete()
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Item removed from cart',
+        'cart_count': cart.items.count(),
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def student_update_cart_item(request, item_id: int):
+    """Update quantity of cart item."""
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    cart = get_object_or_404(Cart, student=request.user)
+    cart_item = get_object_or_404(CartItem, id=item_id, cart=cart)
+    
+    quantity = request.POST.get('quantity', '1')
+    try:
+        quantity = int(quantity)
+        if quantity < 1:
+            cart_item.delete()
+        else:
+            cart_item.quantity = quantity
+            cart_item.save()
+    except ValueError:
+        return JsonResponse({'error': 'Invalid quantity'}, status=400)
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Cart updated',
+        'total': float(cart.get_total()),
+    })
+
+
+@login_required
+def student_checkout(request):
+    """Checkout page - prepare orders for each vendor and initiate payment."""
+    if request.user.role != User.Role.STUDENT:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    cart = get_object_or_404(Cart, student=request.user)
+    
+    if not cart.items.exists():
+        messages.error(request, 'Your cart is empty')
+        return redirect('student_view_cart')
+    
+    vendor_groups = cart.get_vendor_groups()
+    total_amount = cart.get_total()
+    delivery_address = request.GET.get('address', '')
+    
+    return render(request, 'student/checkout.html', {
+        'vendor_groups': vendor_groups,
+        'total_amount': total_amount,
+        'delivery_address': delivery_address,
+        'razorpay_key': settings.RAZORPAY_KEY_ID,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def student_create_order(request):
+    """Create orders for each vendor and initiate Razorpay payment."""
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    cart = get_object_or_404(Cart, student=request.user)
+    
+    if not cart.items.exists():
+        return JsonResponse({'error': 'Cart is empty'}, status=400)
+    
+    delivery_address = request.POST.get('delivery_address', '').strip()
+    if not delivery_address:
+        return JsonResponse({'error': 'Delivery address is required'}, status=400)
+    
+    vendor_groups = cart.get_vendor_groups()
+    total_amount = cart.get_total()
+    
+    # Initialize Razorpay client
+    try:
+        razorpay_client = razorpay.Client(
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+        )
+    except Exception as e:
+        return JsonResponse({'error': 'Payment gateway not configured'}, status=500)
+    
+    # Create Razorpay order
+    try:
+        razorpay_order = razorpay_client.order.create(
+            amount=int(total_amount * 100),  # Razorpay expects amount in paise
+            currency='INR',
+            payment_capture='1'
+        )
+    except Exception as e:
+        return JsonResponse({'error': f'Failed to create payment order: {str(e)}'}, status=500)
+    
+    # Create master order record with payment info
+    orders = []
+    for vendor_id, vendor_data in vendor_groups.items():
+        vendor = vendor_data['vendor']
+        vendor_total = vendor_data['total']
+        
+        order = Order.objects.create(
+            student=request.user,
+            vendor=vendor,
+            total_amount=vendor_total,
+            delivery_address=delivery_address,
+            payment_status=Order.PaymentStatus.PENDING,
+        )
+        
+        # Add items to order
+        for cart_item in vendor_data['items']:
+            OrderItem.objects.create(
+                order=order,
+                vendor_item=cart_item.menu_item,
+                item_name=cart_item.menu_item.name,
+                unit_price=cart_item.menu_item.price,
+                quantity=cart_item.quantity,
+            )
+        
+        orders.append(order)
+    
+    # Create payment record
+    payment = Payment.objects.create(
+        order=orders[0],  # Associate with first order for tracking
+        student=request.user,
+        razorpay_order_id=razorpay_order['id'],
+        amount=total_amount,
+        currency='INR',
+        status=Payment.PaymentStatus.PENDING,
+    )
+    
+    # Clear cart
+    cart.items.all().delete()
+    
+    return JsonResponse({
+        'success': True,
+        'razorpay_order_id': razorpay_order['id'],
+        'amount': int(total_amount * 100),
+        'orders': [o.id for o in orders],
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def student_verify_payment(request):
+    """Verify Razorpay payment and update order status."""
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    try:
+        data = json.loads(request.body)
+    except:
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+    
+    razorpay_order_id = data.get('razorpay_order_id')
+    razorpay_payment_id = data.get('razorpay_payment_id')
+    razorpay_signature = data.get('razorpay_signature')
+    
+    if not all([razorpay_order_id, razorpay_payment_id, razorpay_signature]):
+        return JsonResponse({'error': 'Missing payment details'}, status=400)
+    
+    # Verify payment signature
+    try:
+        razorpay_client = razorpay.Client(
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+        )
+        razorpay_client.utility.verify_payment_signature({
+            'razorpay_order_id': razorpay_order_id,
+            'razorpay_payment_id': razorpay_payment_id,
+            'razorpay_signature': razorpay_signature,
+        })
+    except Exception as e:
+        return JsonResponse({'error': f'Payment verification failed: {str(e)}'}, status=400)
+    
+    # Update payment record
+    try:
+        payment = Payment.objects.get(razorpay_order_id=razorpay_order_id)
+        payment.razorpay_payment_id = razorpay_payment_id
+        payment.razorpay_signature = razorpay_signature
+        payment.status = Payment.PaymentStatus.SUCCESS
+        payment.save()
+        
+        # Update all orders for this payment
+        related_orders = Order.objects.filter(
+            student=request.user,
+            payment=payment
+        ) | Order.objects.filter(
+            student=request.user,
+            total_amount=payment.amount
+        )
+        
+        for order in related_orders:
+            order.payment_status = Order.PaymentStatus.COMPLETED
+            order.save()
+            
+            # Create notification
+            Notification.objects.create(
+                recipient=request.user,
+                order=order,
+                message=f"Payment successful! Your order {order.order_code} has been placed."
+            )
+    except Payment.DoesNotExist:
+        return JsonResponse({'error': 'Payment record not found'}, status=404)
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Payment verified successfully',
+    })
+
+
+@login_required
+def student_orders(request):
+    """Display all orders for the student."""
+    if request.user.role != User.Role.STUDENT:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    orders = Order.objects.filter(student=request.user).select_related(
+        'vendor', 'payment'
+    ).prefetch_related('items', 'notifications', 'delivery_assignment').order_by('-created_at')
+    
+    return render(request, 'student/orders.html', {
+        'orders': orders,
+    })
+
+
+@login_required
+def student_order_detail(request, order_id: int):
+    """Display order details with delivery tracking."""
+    if request.user.role != User.Role.STUDENT:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    order = get_object_or_404(Order, id=order_id, student=request.user)
+    items = order.items.all()
+    delivery_assignment = order.delivery_assignment if hasattr(order, 'delivery_assignment') else None
+    tracking_updates = list(order.tracking_updates.all()[:100])
+    
+    return render(request, 'student/order_detail.html', {
+        'order': order,
+        'items': items,
+        'delivery_assignment': delivery_assignment,
+        'tracking_updates': tracking_updates,
+        'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
+    })
+
+
+@login_required
+def student_order_history(request):
+    """Display order history for the student - completed orders for reordering."""
+    if request.user.role != User.Role.STUDENT:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    # Get all completed/delivered orders
+    history_orders = Order.objects.filter(
+        student=request.user,
+        delivery_status=Order.DeliveryStatus.DELIVERED
+    ).select_related('vendor').prefetch_related('items').order_by('-delivered_at')
+    
+    # Group by vendor for quick reordering
+    vendors_with_orders = {}
+    for order in history_orders:
+        vendor_id = order.vendor.id
+        if vendor_id not in vendors_with_orders:
+            vendors_with_orders[vendor_id] = {
+                'vendor': order.vendor,
+                'orders': []
+            }
+        vendors_with_orders[vendor_id]['orders'].append(order)
+    
+    return render(request, 'student/order_history.html', {
+        'history_orders': history_orders,
+        'vendors_with_orders': list(vendors_with_orders.values()),
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def student_quick_reorder_from_order(request, order_id: int):
+    """Add all items from a previous order to the cart for quick reordering."""
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    order = get_object_or_404(Order, id=order_id, student=request.user, delivery_status=Order.DeliveryStatus.DELIVERED)
+    
+    # Get or create cart
+    cart, _ = Cart.objects.get_or_create(student=request.user)
+    
+    items_count = 0
+    for item in order.items.all():
+        # Get the current menu item (in case it exists and is still active)
+        if item.vendor_item and item.vendor_item.is_active:
+            cart_item, created = CartItem.objects.get_or_create(
+                cart=cart,
+                menu_item=item.vendor_item,
+                defaults={'quantity': item.quantity}
+            )
+            
+            if not created:
+                cart_item.quantity += item.quantity
+                cart_item.save()
+            
+            items_count += 1
+    
+    if items_count == 0:
+        return JsonResponse({
+            'success': False,
+            'error': 'Items from this order are no longer available'
+        }, status=400)
+    
+    return JsonResponse({
+        'success': True,
+        'message': f'Added {items_count} item{"s" if items_count > 1 else ""} to your cart!',
+        'items_count': items_count,
+        'redirect': '/users/student/cart/',
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def delivery_partner_update_location(request, order_id: int):
+    """Delivery partner sends real-time location update."""
+    if request.user.role != User.Role.DELIVERY:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    try:
+        data = json.loads(request.body)
+        latitude = float(data.get('latitude'))
+        longitude = float(data.get('longitude'))
+        accuracy = float(data.get('accuracy', 0))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return JsonResponse({'error': 'Invalid location data'}, status=400)
+    
+    order = get_object_or_404(Order, id=order_id)
+    
+    # Verify this delivery partner is assigned to this order
+    if not hasattr(order, 'delivery_assignment') or order.delivery_assignment.delivery_partner != request.user:
+        return JsonResponse({'error': 'Not assigned to this order'}, status=403)
+    
+    # Create tracking update
+    tracking = OrderTracking.objects.create(
+        order=order,
+        delivery_partner=request.user,
+        latitude=latitude,
+        longitude=longitude,
+        accuracy=accuracy,
+    )
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Location updated',
+        'tracking_id': tracking.id,
+    })
+
+
+@login_required
+def get_order_tracking_updates(request, order_id: int):
+    """Get real-time tracking updates for an order (JSON API)."""
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    order = get_object_or_404(Order, id=order_id, student=request.user)
+    tracking_updates = list(order.tracking_updates.values(
+        'id', 'latitude', 'longitude', 'accuracy', 'timestamp'
+    )[:50])
+    
+    delivery_info = None
+    if hasattr(order, 'delivery_assignment') and order.delivery_assignment:
+        da = order.delivery_assignment
+        delivery_info = {
+            'name': da.partner_name,
+            'phone': da.partner_phone,
+            'vehicle': da.partner_vehicle,
+        }
+    
+    # Parse vendor location from google_maps_location
+    vendor_location = {'latitude': 26.5124, 'longitude': 80.2394}  # Default: IIT Kanpur
+    if order.vendor and order.vendor.google_maps_location:
+        coords = _parse_google_maps_coordinates(order.vendor.google_maps_location)
+        if coords:
+            vendor_location = {'latitude': coords[0], 'longitude': coords[1]}
+    
+    return JsonResponse({
+        'order_id': order.id,
+        'order_code': order.order_code,
+        'status': order.delivery_status,
+        'delivery_info': delivery_info,
+        'tracking_updates': tracking_updates,
+        'vendor_location': vendor_location
+    })
+
+
+# ─── Delivery Module Views ────────────────────────────────────────────────────
+
+@login_required
+@require_http_methods(["POST"])
+def vendor_broadcast_delivery(request, order_id: int):
+    """
+    Vendor marks order as READY and broadcasts to all delivery personnel.
+    """
+    if request.user.role != User.Role.VENDOR:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    vendor_profile = get_object_or_404(VendorProfile, user=request.user)
+    order = get_object_or_404(Order, id=order_id, vendor=vendor_profile)
+    
+    if order.vendor_status != Order.VendorStatus.READY:
+        return JsonResponse({'error': 'Order must be marked as READY first'}, status=400)
+    
+    # Check if broadcast already exists
+    if hasattr(order, 'delivery_broadcast') and order.delivery_broadcast.status == DeliveryBroadcast.BroadcastStatus.ACTIVE:
+        return JsonResponse({'error': 'Delivery already broadcasted'}, status=400)
+    
+    # Get vendor location from profile
+    pickup_lat, pickup_lng = None, None
+    if vendor_profile.google_maps_location:
+        coords = _parse_google_maps_coordinates(vendor_profile.google_maps_location)
+        if coords:
+            pickup_lat, pickup_lng = coords
+    
+    # Create broadcast
+    expires_at = timezone.now() + timedelta(minutes=10)
+    broadcast = DeliveryBroadcast.objects.create(
+        order=order,
+        status=DeliveryBroadcast.BroadcastStatus.ACTIVE,
+        expires_at=expires_at,
+        pickup_latitude=pickup_lat,
+        pickup_longitude=pickup_lng,
+    )
+    
+    # Create response entries for all active delivery personnel
+    delivery_personnel = User.objects.filter(role=User.Role.DELIVERY)
+    for personnel in delivery_personnel:
+        DeliveryBroadcastResponse.objects.create(
+            broadcast=broadcast,
+            delivery_partner=personnel,
+            status=DeliveryBroadcastResponse.ResponseStatus.PENDING,
+        )
+    
+    # Notify all delivery personnel
+    for personnel in delivery_personnel:
+        Notification.objects.create(
+            recipient=personnel,
+            order=order,
+            message=f"New delivery request: {order.order_code} from {vendor_profile.outlet_name}. Order ready for pickup."
+        )
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Delivery broadcasted to all personnel',
+        'broadcast_id': broadcast.id,
+    })
+
+
+@login_required
+def delivery_available_orders(request):
+    """
+    Display all available delivery broadcasts for the logged-in delivery partner.
+    """
+    if request.user.role != User.Role.DELIVERY:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    # Get all active broadcasts that this partner hasn't responded to
+    active_broadcasts = DeliveryBroadcast.objects.filter(
+        status=DeliveryBroadcast.BroadcastStatus.ACTIVE
+    ).select_related('order', 'order__vendor', 'order__student')
+    
+    # Get broadcast responses from this partner
+    my_responses = DeliveryBroadcastResponse.objects.filter(
+        delivery_partner=request.user
+    ).values('broadcast_id', 'status')
+    response_dict = {r['broadcast_id']: r['status'] for r in my_responses}
+    
+    # Filter out ones partner has already responded to
+    available = []
+    for broadcast in active_broadcasts:
+        if broadcast.id not in response_dict or response_dict[broadcast.id] == DeliveryBroadcastResponse.ResponseStatus.PENDING:
+            available.append(broadcast)
+    
+    # Get accepted deliveries
+    my_accepted = DeliveryAssignment.objects.filter(
+        delivery_partner=request.user,
+        status__in=[
+            DeliveryAssignment.AssignmentStatus.ACCEPTED,
+            DeliveryAssignment.AssignmentStatus.PICKED_UP,
+            DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY,
+        ]
+    ).select_related('order', 'order__vendor', 'order__student')
+    
+    return render(request, 'delivery/available_orders.html', {
+        'broadcasts': available,
+        'my_deliveries': my_accepted,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def delivery_accept_broadcast(request, broadcast_id: int):
+    """
+    Delivery partner accepts a delivery broadcast.
+    """
+    if request.user.role != User.Role.DELIVERY:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    broadcast = get_object_or_404(DeliveryBroadcast, id=broadcast_id)
+    
+    if broadcast.status != DeliveryBroadcast.BroadcastStatus.ACTIVE:
+        return JsonResponse({'error': 'Broadcast is no longer active'}, status=400)
+    
+    if timezone.now() > broadcast.expires_at:
+        broadcast.status = DeliveryBroadcast.BroadcastStatus.EXPIRED
+        broadcast.save()
+        return JsonResponse({'error': 'Broadcast has expired'}, status=400)
+    
+    # Check if already assigned
+    if broadcast.accepted_by:
+        return JsonResponse({'error': 'Already accepted by another partner'}, status=400)
+    
+    # Accept the broadcast
+    broadcast.status = DeliveryBroadcast.BroadcastStatus.ACCEPTED
+    broadcast.accepted_by = request.user
+    broadcast.accepted_at = timezone.now()
+    broadcast.save()
+    
+    # Get partner details from StaffApplication
+    app = StaffApplication.objects.filter(
+        email=request.user.email,
+        role_applied='DELIVERY'
+    ).first()
+    
+    # Create delivery assignment
+    assignment = DeliveryAssignment.objects.create(
+        order=broadcast.order,
+        delivery_partner=request.user,
+        status=DeliveryAssignment.AssignmentStatus.ACCEPTED,
+        accepted_at=timezone.now(),
+        partner_name=request.user.get_full_name() or request.user.username,
+        partner_phone=request.user.phone,
+        partner_vehicle=app.vehicle_number if app else '',
+    )
+    
+    # Cancel all other responses
+    DeliveryBroadcastResponse.objects.filter(
+        broadcast=broadcast
+    ).exclude(delivery_partner=request.user).update(
+        status=DeliveryBroadcastResponse.ResponseStatus.CANCELLED,
+        responded_at=timezone.now()
+    )
+    
+    # Update current user's response
+    my_response = DeliveryBroadcastResponse.objects.get(
+        broadcast=broadcast,
+        delivery_partner=request.user
+    )
+    my_response.status = DeliveryBroadcastResponse.ResponseStatus.ACCEPTED
+    my_response.responded_at = timezone.now()
+    my_response.save()
+    
+    # Notify student
+    Notification.objects.create(
+        recipient=broadcast.order.student,
+        order=broadcast.order,
+        message=f'Your order {broadcast.order.order_code} has been picked up by a delivery partner. They will be there soon!'
+    )
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Delivery accepted successfully',
+        'assignment_id': assignment.id,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def delivery_reject_broadcast(request, broadcast_id: int):
+    """
+    Delivery partner rejects a delivery broadcast.
+    """
+    if request.user.role != User.Role.DELIVERY:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    broadcast = get_object_or_404(DeliveryBroadcast, id=broadcast_id)
+    reason = request.POST.get('reason', 'No reason provided')
+    
+    # Update response
+    response, _ = DeliveryBroadcastResponse.objects.get_or_create(
+        broadcast=broadcast,
+        delivery_partner=request.user
+    )
+    response.status = DeliveryBroadcastResponse.ResponseStatus.REJECTED
+    response.responded_at = timezone.now()
+    response.response_reason = reason
+    response.save()
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Broadcast rejected',
+    })
+
+
+@login_required
+def delivery_navigation(request, assignment_id: int):
+    """
+    Show navigation from delivery partner's current location to vendor.
+    """
+    if request.user.role != User.Role.DELIVERY:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    assignment = get_object_or_404(DeliveryAssignment, id=assignment_id, delivery_partner=request.user)
+    broadcast = assignment.order.delivery_broadcast
+    
+    return render(request, 'delivery/navigation.html', {
+        'assignment': assignment,
+        'order': assignment.order,
+        'vendor': assignment.order.vendor,
+        'broadcast': broadcast,
+        'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def delivery_mark_picked_up(request, assignment_id: int):
+    """
+    Mark order as picked up from vendor.
+    """
+    if request.user.role != User.Role.DELIVERY:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    assignment = get_object_or_404(DeliveryAssignment, id=assignment_id, delivery_partner=request.user)
+    
+    if assignment.status != DeliveryAssignment.AssignmentStatus.ACCEPTED:
+        return JsonResponse({'error': 'Invalid status for pickup'}, status=400)
+    
+    assignment.status = DeliveryAssignment.AssignmentStatus.PICKED_UP
+    assignment.picked_up_at = timezone.now()
+    assignment.save()
+    
+    # Update order status
+    order = assignment.order
+    order.delivery_status = Order.DeliveryStatus.OUT_FOR_DELIVERY
+    order.save()
+    
+    # Notify student
+    Notification.objects.create(
+        recipient=order.student,
+        order=order,
+        message=f'Your order {order.order_code} has been picked up! View live tracking of your delivery.'
+    )
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Marked as picked up',
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def delivery_start_delivery(request, assignment_id: int):
+    """
+    Mark order as out for delivery (vendor triggers when ready).
+    """
+    if request.user.role != User.Role.VENDOR:
+        # Also allow delivery partner if they want to explicitly mark
+        if request.user.role != User.Role.DELIVERY:
+            return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    assignment = get_object_or_404(DeliveryAssignment, id=assignment_id)
+    
+    if assignment.status not in [
+        DeliveryAssignment.AssignmentStatus.ACCEPTED,
+        DeliveryAssignment.AssignmentStatus.PICKED_UP
+    ]:
+        return JsonResponse({'error': 'Invalid status'}, status=400)
+    
+    assignment.status = DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY
+    assignment.out_for_delivery_at = timezone.now()
+    assignment.save()
+    
+    # Update order status
+    order = assignment.order
+    order.delivery_status = Order.DeliveryStatus.OUT_FOR_DELIVERY
+    order.save()
+    
+    # Notify student with tracking link
+    Notification.objects.create(
+        recipient=order.student,
+        order=order,
+        message=f'🚗 Your order {order.order_code} is out for delivery! View live tracking now.'
+    )
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Order marked as out for delivery',
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def delivery_mark_delivered(request, assignment_id: int):
+    """
+    Mark order as delivered by delivery partner.
+    """
+    if request.user.role != User.Role.DELIVERY:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    assignment = get_object_or_404(DeliveryAssignment, id=assignment_id, delivery_partner=request.user)
+    
+    if assignment.status != DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY:
+        return JsonResponse({'error': 'Order must be out for delivery first'}, status=400)
+    
+    assignment.status = DeliveryAssignment.AssignmentStatus.DELIVERED
+    assignment.delivered_at = timezone.now()
+    assignment.save()
+    
+    # Update order status
+    order = assignment.order
+    order.delivery_status = Order.DeliveryStatus.DELIVERED
+    order.save()
+    
+    # Notify student
+    Notification.objects.create(
+        recipient=order.student,
+        order=order,
+        message=f'✅ Your order {order.order_code} has been delivered! Please rate your experience.'
+    )
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Order marked as delivered',
+    })
+
+
+def _parse_google_maps_coordinates(maps_url: str) -> tuple:
+    """
+    Extract lat, lng from Google Maps URL.
+    Format: https://www.google.com/maps/search/?api=1&query=28.123,-45.456
+    """
+    try:
+        if 'query=' in maps_url:
+            query_part = maps_url.split('query=')[1].split('&')[0]
+            parts = query_part.split(',')
+            if len(parts) == 2:
+                lat = float(parts[0].strip())
+                lng = float(parts[1].strip())
+                return (lat, lng)
+    except:
+        pass
+    return None
+
+
+@login_required
+@require_http_methods(["POST"])
+def delivery_send_location(request, assignment_id: int):
+    """
+    Delivery partner sends real-time location updates.
+    """
+    if request.user.role != User.Role.DELIVERY:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    try:
+        data = json.loads(request.body)
+        latitude = float(data.get('latitude'))
+        longitude = float(data.get('longitude'))
+        accuracy = float(data.get('accuracy', 0))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return JsonResponse({'error': 'Invalid location data'}, status=400)
+    
+    assignment = get_object_or_404(DeliveryAssignment, id=assignment_id, delivery_partner=request.user)
+    order = assignment.order
+    
+    # Create tracking update
+    tracking = OrderTracking.objects.create(
+        order=order,
+        delivery_partner=request.user,
+        latitude=latitude,
+        longitude=longitude,
+        accuracy=accuracy,
+    )
+    
+    return JsonResponse({
+        'success': True,
+        'message': 'Location updated',
+        'tracking_id': tracking.id,
+    })

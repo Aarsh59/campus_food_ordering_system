@@ -1,6 +1,243 @@
 {% extends 'base.html' %}
 {% block title %}Student Dashboard{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .nav-tabs .nav-link {
+        color: #666;
+        border: none;
+        border-bottom: 3px solid transparent;
+        padding: 12px 20px;
+        font-weight: 500;
+    }
+    .nav-tabs .nav-link:hover {
+        color: #ff6b00;
+    }
+    .nav-tabs .nav-link.active {
+        color: #ff6b00;
+        border-bottom-color: #ff6b00;
+        background-color: transparent;
+    }
+    .notification-item {
+        border-left: 4px solid #ff6b00;
+        padding: 15px;
+        margin-bottom: 10px;
+        background-color: #f8f9fa;
+        border-radius: 6px;
+    }
+    .stat-card {
+        text-align: center;
+        padding: 20px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        margin-bottom: 15px;
+    }
+    .stat-card h3 {
+        margin: 0;
+        font-size: 2.5rem;
+        font-weight: bold;
+    }
+    .stat-card p {
+        margin: 5px 0 0 0;
+        font-size: 0.95rem;
+        opacity: 0.9;
+    }
+    .vendor-card {
+        border: none;
+        border-radius: 12px;
+        overflow: hidden;
+        transition: transform 0.2s, box-shadow 0.2s;
+        cursor: pointer;
+    }
+    .vendor-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<h2>Student Dashboard 🎓</h2>
-<p>Coming soon...</p>
+<div class="mb-4">
+    <h1 class="mb-1">Welcome, <strong>{{ request.user.username }}</strong>! 🍽️</h1>
+    <p class="text-muted">Your campus food ordering hub</p>
+</div>
+
+<!-- Quick Stats --> 
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <h3>{% if request.user.orders_as_student.count %}{{ request.user.orders_as_student.count }}{% else %}0{% endif %}</h3>
+            <p>Orders Placed</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+            <h3>{{ notifications|length }}</h3>
+            <p>Notifications</p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+            <h3>Explore</h3>
+            <p><a href="{% url 'student_vendors_list' %}" class="btn btn-light btn-sm">Visit Vendors</a></p>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+            <h3><a href="{% url 'student_view_cart' %}" class="text-white">🛒</a></h3>
+            <p><a href="{% url 'student_view_cart' %}" class="text-white" style="text-decoration: none;">View Cart</a></p>
+        </div>
+    </div>
+</div>
+
+<!-- Navigation Tabs -->
+<ul class="nav nav-tabs mb-4" role="tablist">
+    <li class="nav-item">
+        <a class="nav-link active" data-bs-toggle="tab" href="#notifications">📬 Notifications</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#recent-orders">📦 Recent Orders</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#quick-links">⚡ Quick Links</a>
+    </li>
+</ul>
+
+<!-- Tab Content -->
+<div class="tab-content">
+    <!-- Notifications Tab -->
+    <div id="notifications" class="tab-pane fade show active">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Latest Notifications</h5>
+                {% if notifications %}
+                    {% for n in notifications %}
+                        <div class="notification-item">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <span class="badge bg-info mb-2">{{ n.get_notification_type_display }}</span>
+                                    <p class="mb-2">{{ n.message }}</p>
+                                    <small class="text-muted">{{ n.created_at|date:"M d, Y H:i" }}</small>
+                                </div>
+                                {% if n.order %}
+                                    <a href="{% url 'student_order_detail' n.order.id %}" class="btn btn-sm btn-primary">
+                                        View Order
+                                    </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> No notifications yet. Start ordering to get updates!
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Orders Tab -->
+    <div id="recent-orders" class="tab-pane fade">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Your Recent Orders</h5>
+                {% if request.user.orders_as_student.all %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Order ID</th>
+                                    <th>Vendor</th>
+                                    <th>Amount</th>
+                                    <th>Status</th>
+                                    <th>Date</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for order in request.user.orders_as_student.all|slice:":5" %}
+                                    <tr>
+                                        <td><strong>{{ order.order_code }}</strong></td>
+                                        <td>{{ order.vendor.outlet_name }}</td>
+                                        <td>₹{{ order.total_amount }}</td>
+                                        <td>
+                                            <span class="badge {% if order.payment_status == 'COMPLETED' %}bg-success{% elif order.payment_status == 'FAILED' %}bg-danger{% else %}bg-warning{% endif %}">
+                                                {{ order.get_payment_status_display }}
+                                            </span>
+                                        </td>
+                                        <td>{{ order.created_at|date:"M d, Y" }}</td>
+                                        <td>
+                                            <a href="{% url 'student_order_detail' order.id %}" class="btn btn-sm btn-outline-primary">
+                                                Track
+                                            </a>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <a href="{% url 'student_orders' %}" class="btn btn-outline-primary">View All Orders →</a>
+                {% else %}
+                    <div class="alert alert-info">
+                        <i class="fas fa-fork"></i> No orders yet. <a href="{% url 'student_vendors_list' %}">Explore vendors</a> and place your first order!
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Links Tab -->
+    <div id="quick-links" class="tab-pane fade">
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">🏪 Discover Vendors</h5>
+                        <p class="card-text">Browse menus from multiple restaurants on campus</p>
+                        <a href="{% url 'student_vendors_list' %}" class="btn btn-primary">Browse Now</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">🛒 Shopping Cart</h5>
+                        <p class="card-text">Add items from different vendors and checkout</p>
+                        <a href="{% url 'student_view_cart' %}" class="btn btn-primary">View Cart</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">📦 Track Orders</h5>
+                        <p class="card-text">Real-time delivery updates with live GPS tracking</p>
+                        <a href="{% url 'student_orders' %}" class="btn btn-primary">Track Orders</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">📋 Order History</h5>
+                        <p class="card-text">Reorder your favorite meals quickly</p>
+                        <a href="{% url 'student_order_history' %}" class="btn btn-primary">Order History</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">⚙️ Account Settings</h5>
+                        <p class="card-text">Manage your profile and preferences</p>
+                        <a href="{% url 'change_password' %}" class="btn btn-primary">Settings</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}

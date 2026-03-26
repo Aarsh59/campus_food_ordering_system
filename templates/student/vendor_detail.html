@@ -1,0 +1,187 @@
+{% extends 'base.html' %}
+{% block title %}{{ vendor.outlet_name }} - Menu{% endblock %}
+
+{% block extra_js %}
+<style>
+    .vendor-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 40px 20px;
+        border-radius: 12px;
+        margin-bottom: 30px;
+    }
+    .vendor-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+    }
+    .menu-item-card {
+        border: none;
+        border-radius: 12px;
+        transition: all 0.3s;
+        height: 100%;
+    }
+    .menu-item-card:hover {
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+        transform: translateY(-5px);
+    }
+    .menu-item-image {
+        width: 100%;
+        height: 200px;
+        background-color: #f0f0f0;
+        border-radius: 12px 12px 0 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #999;
+        font-size: 3rem;
+    }
+    .menu-item-body {
+        padding: 15px;
+    }
+    .menu-item-name {
+        font-weight: bold;
+        font-size: 1.1rem;
+        margin-bottom: 8px;
+        color: #333;
+    }
+    .menu-item-description {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 12px;
+        line-height: 1.4;
+    }
+    .menu-item-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-top: 12px;
+        border-top: 1px solid #eee;
+    }
+    .menu-item-price {
+        font-size: 1.3rem;
+        font-weight: bold;
+        color: #ff6b00;
+    }
+    .quantity-selector {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+    }
+    .quantity-selector button {
+        padding: 4px 8px;
+        font-size: 0.85rem;
+    }
+    .quantity-selector span {
+        padding: 0 10px;
+        font-weight: bold;
+    }
+</style>
+<script>
+function addToCart(itemId) {
+    const qty = document.getElementById('qty-' + itemId).value;
+    const form = new FormData();
+    form.append('quantity', qty);
+    
+    fetch('{% url "student_add_to_cart" 0 %}'.replace('0', itemId), {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCsrfToken(),
+        },
+        body: form
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            document.getElementById('cart-count').innerHTML = data.cart_count;
+        } else {
+            alert('Error: ' + data.error);
+        }
+    });
+}
+
+function updateQty(itemId, change) {
+    const input = document.getElementById('qty-' + itemId);
+    let val = parseInt(input.value) + change;
+    if (val < 1) val = 1;
+    input.value = val;
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<!-- Vendor Header -->
+<div class="vendor-header">
+    <div class="vendor-info">
+        <div>
+            <h1 class="mb-2">{{ vendor.outlet_name }}</h1>
+            {% if vendor.cuisine_type %}
+                <p class="mb-2"><strong>Cuisine:</strong> {{ vendor.cuisine_type }}</p>
+            {% endif %}
+            {% if vendor.operating_hours %}
+                <p class="mb-2"><strong>Hours:</strong> {{ vendor.operating_hours }}</p>
+            {% endif %}
+            {% if vendor.google_maps_address %}
+                <p class="mb-0"><strong>Location:</strong> {{ vendor.google_maps_address }}</p>
+            {% endif %}
+        </div>
+        <div>
+            <a href="{% url 'student_vendors_list' %}" class="btn btn-light">← Back to Vendors</a>
+            {% if vendor.google_maps_location %}
+                <a href="{{ vendor.google_maps_location }}" target="_blank" class="btn btn-light">📍 View Map</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Cart Button Badge -->
+<div class="mb-3 text-end">
+    <a href="{% url 'student_view_cart' %}" class="btn btn-primary">
+        🛒 View Cart <span class="badge bg-danger" id="cart-count">{{ cart_count }}</span>
+    </a>
+</div>
+
+<!-- Menu Items -->
+<h3 class="mb-4">📋 Menu</h3>
+
+{% if menu_items %}
+    <div class="row">
+        {% for item in menu_items %}
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card menu-item-card">
+                    <div class="menu-item-image">
+                        {% if item.photo %}
+                            <img src="{{ item.photo.url }}" alt="{{ item.name }}" style="width: 100%; height: 100%; object-fit: cover;">
+                        {% else %}
+                            🍽️
+                        {% endif %}
+                    </div>
+                    <div class="menu-item-body">
+                        <div class="menu-item-name">{{ item.name }}</div>
+                        {% if item.description %}
+                            <div class="menu-item-description">{{ item.description|truncatewords:15 }}</div>
+                        {% endif %}
+                        <div class="menu-item-footer">
+                            <div class="menu-item-price">₹{{ item.price }}</div>
+                            <div class="quantity-selector">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, -1)">−</button>
+                                <input type="number" id="qty-{{ item.id }}" value="1" min="1" max="20" style="width: 50px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 4px;">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, 1)">+</button>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary w-100 mt-3" onclick="addToCart({{ item.id }})">
+                            Add to Cart
+                        </button>
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="alert alert-info">
+        <p class="mb-0">No menu items available from this vendor yet</p>
+    </div>
+{% endif %}
+
+{% endblock %}

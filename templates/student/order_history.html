@@ -1,0 +1,213 @@
+{% extends 'base.html' %}
+{% block title %}Order History - Campus Food Ordering{% endblock %}
+
+{% block extra_js %}
+<style>
+    .history-card {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        transition: all 0.3s;
+        cursor: pointer;
+    }
+    .history-card:hover {
+        box-shadow: 0 8px 24px rgba(0,0,0,0.10);
+        border-color: #ff6b00;
+    }
+    .vendor-section {
+        margin-bottom: 30px;
+    }
+    .vendor-header {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #ff6b00;
+    }
+    .vendor-name {
+        font-size: 1.3rem;
+        font-weight: bold;
+        color: #333;
+    }
+    .order-item-list {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+    }
+    .order-item-badge {
+        background-color: #f0f0f0;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+    }
+    .reorder-btn {
+        background-color: #28a745;
+        color: white;
+        border: none;
+        padding: 8px 15px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        transition: all 0.3s;
+    }
+    .reorder-btn:hover {
+        background-color: #218838;
+        transform: translateY(-2px);
+    }
+    .order-date {
+        color: #666;
+        font-size: 0.9rem;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        background-color: #f8f9fa;
+        border-radius: 12px;
+    }
+    .empty-state h5 {
+        margin-top: 20px;
+        color: #333;
+    }
+    .empty-state .text-muted {
+        margin-bottom: 20px;
+    }
+    .filter-tabs {
+        margin-bottom: 30px;
+    }
+    .filter-tabs .nav-link {
+        color: #666;
+        border: none;
+        border-bottom: 3px solid transparent;
+        padding: 12px 20px;
+    }
+    .filter-tabs .nav-link.active {
+        color: #ff6b00;
+        border-bottom-color: #ff6b00;
+        background-color: transparent;
+    }
+</style>
+
+<script>
+function reorderItems(orderId, vendorId) {
+    // Fetch the items from this order
+    fetch(`/users/student/order/${orderId}/tracking/`)
+        .then(r => r.json())
+        .then(data => {
+            // Redirect to vendor detail with reorder flag
+            window.location.href = `/users/student/vendor/${vendorId}/?reorder_from=${orderId}`;
+        })
+        .catch(err => {
+            alert('Error loading order items. Please try again.');
+        });
+}
+
+function quickAddToCart(orderId) {
+    // Add all items from this order to cart
+    fetch(`/users/student/order/${orderId}/quick-add-to-cart/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCsrfToken(),
+        }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert(`Added ${data.items_count} items to your cart!`);
+            window.location.href = '/users/student/cart/';
+        } else {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(err => {
+        alert('Error adding items to cart. Please try again.');
+    });
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h1 class="mb-1">📋 Order History</h1>
+    <p class="text-muted">Reorder your favorite meals quickly</p>
+</div>
+
+{% if vendors_with_orders %}
+    {% for vendor_group in vendors_with_orders %}
+        <div class="vendor-section">
+            <div class="vendor-header">
+                <div>
+                    <div class="vendor-name">{{ vendor_group.vendor.outlet_name }}</div>
+                    <small class="text-muted">{{ vendor_group.orders|length }} order{{ vendor_group.orders|pluralize }} completed</small>
+                </div>
+            </div>
+
+            <div class="row g-3">
+                {% for order in vendor_group.orders %}
+                    <div class="col-md-6 col-lg-4">
+                        <div class="history-card">
+                            <div style="padding: 15px;">
+                                <!-- Order Header -->
+                                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+                                    <div>
+                                        <div style="font-weight: bold; color: #ff6b00;">{{ order.order_code }}</div>
+                                        <small class="order-date">
+                                            {% if order.delivered_at %}
+                                                {{ order.delivered_at|date:"M d, Y" }}
+                                            {% else %}
+                                                {{ order.created_at|date:"M d, Y" }}
+                                            {% endif %}
+                                        </small>
+                                    </div>
+                                    <div style="text-align: right;">
+                                        <span class="badge bg-success">✓ Delivered</span>
+                                        <div style="margin-top: 5px; font-weight: bold; color: #ff6b00;">₹{{ order.total_amount }}</div>
+                                    </div>
+                                </div>
+
+                                <!-- Items -->
+                                <div class="order-item-list">
+                                    {% for item in order.items.all|slice:":3" %}
+                                        <div class="order-item-badge">
+                                            {{ item.item_name }} ×{{ item.quantity }}
+                                        </div>
+                                    {% endfor %}
+                                    {% if order.items.count > 3 %}
+                                        <div class="order-item-badge" style="background-color: #e0e0e0;">
+                                            +{{ order.items.count|add:"-3" }} more
+                                        </div>
+                                    {% endif %}
+                                </div>
+
+                                <!-- Actions -->
+                                <div style="display: flex; gap: 8px; margin-top: 15px;">
+                                    <button class="reorder-btn flex-grow-1" onclick="quickAddToCart({{ order.id }})">
+                                        🛒 Reorder
+                                    </button>
+                                    <a href="{% url 'student_order_detail' order.id %}" class="btn btn-outline-secondary btn-sm" style="flex-grow-1;">
+                                        👁️ View
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    {% endfor %}
+{% else %}
+    <div class="empty-state">
+        <div style="font-size: 3rem;">🛍️</div>
+        <h5>No Order History Yet</h5>
+        <p class="text-muted">Complete your first order to see it in your history</p>
+        <a href="{% url 'student_vendors_list' %}" class="btn btn-primary">
+            🏪 Browse Vendors
+        </a>
+    </div>
+{% endif %}
+
+<div class="mt-4">
+    <a href="{% url 'student_dashboard' %}" class="btn btn-outline-primary">← Back to Dashboard</a>
+</div>
+
+{% endblock %}

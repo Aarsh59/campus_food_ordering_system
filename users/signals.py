@@ -4,7 +4,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 import random
 import string
-from .models import StaffApplication, User
+from .models import StaffApplication, User, VendorProfile
 
 
 def generate_password(length=10):
@@ -34,7 +34,7 @@ def handle_application_approval(sender, instance, created, **kwargs):
         password = generate_password()
 
         # create user account
-        User.objects.create_user(
+        created_user = User.objects.create_user(
             username   = username,
             email      = instance.email,
             password   = password,
@@ -43,6 +43,17 @@ def handle_application_approval(sender, instance, created, **kwargs):
             first_name = instance.full_name.split()[0],
             last_name  = ' '.join(instance.full_name.split()[1:]),
         )
+
+        # Create vendor profile on approval.
+        # This enables the vendor module (location + menu + tickets).
+        if instance.role_applied == 'VENDOR':
+            VendorProfile.objects.create(
+                user=created_user,
+                outlet_name=instance.outlet_name,
+                google_maps_location=instance.outlet_location,
+                cuisine_type=instance.cuisine_type,
+                operating_hours=instance.operating_hours,
+            )
 
         # send approval email with credentials
         send_mail(

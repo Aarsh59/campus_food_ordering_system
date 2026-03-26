@@ -1,0 +1,263 @@
+{% extends 'base.html' %}
+{% block title %}Checkout{% endblock %}
+
+{% block extra_js %}
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<style>
+    .checkout-container {
+        max-width: 900px;
+        margin: 0 auto;
+    }
+    .order-summary-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 12px;
+        margin-bottom: 30px;
+    }
+    .vendor-order {
+        background-color: white;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        border-left: 4px solid #ff6b00;
+    }
+    .vendor-name {
+        font-weight: bold;
+        font-size: 1.1rem;
+        margin-bottom: 12px;
+        color: #333;
+    }
+    .order-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #eee;
+        font-size: 0.95rem;
+    }
+    .order-item:last-child {
+        border-bottom: none;
+    }
+    .vendor-total {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 2px solid #eee;
+        font-weight: bold;
+        color: #ff6b00;
+    }
+    .payment-section {
+        background-color: #f8f9fa;
+        padding: 30px;
+        border-radius: 12px;
+        margin-bottom: 30px;
+    }
+    .payment-method {
+        background-color: white;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        border: 2px solid #ddd;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    .payment-method:hover, .payment-method.selected {
+        border-color: #ff6b00;
+        background-color: #fff8f5;
+    }
+    .payment-icon {
+        font-size: 2rem;
+        margin-bottom: 10px;
+    }
+</style>
+<script>
+function createOrder() {
+    const address = document.getElementById('delivery-address').value.trim();
+    if (!address) {
+        alert('Please enter your delivery address');
+        return;
+    }
+
+    const form = new FormData();
+    form.append('delivery_address', address);
+
+    fetch('{% url "student_create_order" %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCsrfToken(),
+        },
+        body: form
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            initiatePayment(data);
+        } else {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(err => {
+        alert('Error creating order: ' + err);
+    });
+}
+
+function initiatePayment(data) {
+    const options = {
+        key: '{{ razorpay_key }}',
+        amount: data.amount,
+        currency: 'INR',
+        order_id: data.razorpay_order_id,
+        handler: function(response) {
+            verifyPayment(response);
+        },
+        prefill: {
+            name: '{{ request.user.get_full_name|default:request.user.username }}',
+            email: '{{ request.user.email }}',
+            contact: '{{ request.user.phone }}'
+        },
+        theme: {
+            color: '#ff6b00'
+        }
+    };
+
+    const rzp = new Razorpay(options);
+    rzp.open();
+}
+
+function verifyPayment(response) {
+    const form = new FormData();
+    form.append('razorpay_order_id', response.razorpay_order_id);
+    form.append('razorpay_payment_id', response.razorpay_payment_id);
+    form.append('razorpay_signature', response.razorpay_signature);
+
+    fetch('{% url "student_verify_payment" %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCsrfToken(),
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert('Payment successful! Redirecting to your orders...');
+            window.location.href = '{% url "student_orders" %}';
+        } else {
+            alert('Payment verification failed: ' + data.error);
+        }
+    })
+    .catch(err => {
+        alert('Error verifying payment: ' + err);
+    });
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="checkout-container">
+    <h1 class="mb-4">Checkout</h1>
+
+    <!-- Delivery Address -->
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">📍 Delivery Address</h5>
+        </div>
+        <div class="card-body">
+            <textarea id="delivery-address" class="form-control" placeholder="Enter your hostel/residence address" rows="3"></textarea>
+            <small class="text-muted">This address will be used for the delivery</small>
+        </div>
+    </div>
+
+    <!-- Order Summary by Vendor -->
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">📦 Order Summary</h5>
+        </div>
+        <div class="card-body">
+            {% for vendor_id, vendor_data in vendor_groups.items %}
+                <div class="vendor-order">
+                    <div class="vendor-name">{{ vendor_data.vendor.outlet_name }}</div>
+                    
+                    {% for item in vendor_data.items %}
+                        <div class="order-item">
+                            <span>{{ item.menu_item.name }} × {{ item.quantity }}</span>
+                            <span>₹{{ item.get_subtotal }}</span>
+                        </div>
+                    {% endfor %}
+                    
+                    <div class="vendor-total">
+                        <span>Subtotal:</span>
+                        <span>₹{{ vendor_data.total }}</span>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Price Breakdown -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                <span>Subtotal:</span>
+                <span>₹{{ total_amount }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                <span>Delivery Fee:</span>
+                <span class="text-success">Free</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                <span>Tax:</span>
+                <span>₹0</span>
+            </div>
+            <hr>
+            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 1.2rem; color: #ff6b00;">
+                <span>Total Amount:</span>
+                <span>₹{{ total_amount }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Payment Section -->
+    <div class="card mb-4">
+        <div class="card-header bg-success text-white">
+            <h5 class="mb-0">💳 Payment Method</h5>
+        </div>
+        <div class="card-body">
+            <div class="payment-method selected">
+                <div class="payment-icon">💳</div>
+                <strong>Razorpay Payment Gateway</strong>
+                <p class="text-muted mb-0">Secure payment via all major cards, UPI, and net banking</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Terms -->
+    <div class="alert alert-info">
+        <h6 class="mb-2">ℹ️ Order Information</h6>
+        <ul class="mb-0" style="font-size: 0.95rem;">
+            <li>Payment will be processed through Razorpay</li>
+            <li>Your food will be prepared by the vendors</li>
+            <li>A delivery partner will pick up your food</li>
+            <li>You'll receive real-time tracking on your order</li>
+            <li>Estimated delivery time: 30-45 minutes</li>
+        </ul>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="d-grid gap-2">
+        <button class="btn btn-primary btn-lg" onclick="createOrder()">
+            Proceed to Razorpay Payment →
+        </button>
+        <a href="{% url 'student_view_cart' %}" class="btn btn-outline-secondary">
+            ← Back to Cart
+        </a>
+    </div>
+</div>
+
+{% endblock %}

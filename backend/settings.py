@@ -110,6 +110,11 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # ─── Campus Settings ──────────────────────────────────────────────────────────
 ALLOWED_EMAIL_DOMAIN = '@iitk.ac.in'  # replace with your college domain
 
+# Google Maps (Geocoding) API key for generating map links
+GOOGLE_MAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY', '')
+# Razorpay Payment Gateway
+RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
+RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', '')
 
 EMAIL_BACKEND       = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST          = 'smtp.gmail.com'

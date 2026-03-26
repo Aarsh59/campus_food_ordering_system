@@ -1,0 +1,462 @@
+{% extends 'base.html' %}
+{% block title %}Order Details - {{ order.order_code }}{% endblock %}
+
+{% block extra_js %}
+<script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=maps"></script>
+<style>
+    #delivery-map {
+        width: 100%;
+        height: 500px;
+        border-radius: 12px;
+        margin-bottom: 30px;
+    }
+    .order-timeline {
+        position: relative;
+        padding: 20px 0;
+    }
+    .timeline-item {
+        display: flex;
+        margin-bottom: 20px;
+        position: relative;
+    }
+    .timeline-marker {
+        width: 40px;
+        height: 40px;
+        background-color: #ff6b00;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        margin-right: 20px;
+        flex-shrink: 0;
+        position: relative;
+        z-index: 2;
+    }
+    .timeline-marker.completed {
+        background-color: #28a745;
+    }
+    .timeline-marker.pending {
+        background-color: #ffc107;
+    }
+    .timeline-marker.active {
+        width: 50px;
+        height: 50px;
+        margin-top: -5px;
+        margin-left: -5px;
+        animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(255, 107, 0, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(255, 107, 0, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(255, 107, 0, 0); }
+    }
+    .timeline-item:not(:last-child)::before {
+        content: '';
+        position: absolute;
+        left: 19px;
+        top: 50px;
+        width: 2px;
+        height: 40px;
+        background-color: #ddd;
+        z-index: 1;
+    }
+    .timeline-content {
+        flex-grow: 1;
+    }
+    .timeline-title {
+        font-weight: bold;
+        color: #333;
+        margin-bottom: 5px;
+    }
+    .timeline-time {
+        font-size: 0.9rem;
+        color: #666;
+    }
+    .info-section {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+    }
+    .info-item {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 10px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #ddd;
+    }
+    .info-item:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+    }
+    .partner-card {
+        border: 2px solid #ff6b00;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    .partner-name {
+        font-size: 1.2rem;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+    .partner-info {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+    }
+    .partner-detail {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .partner-detail label {
+        font-weight: bold;
+        color: #333;
+        margin: 0;
+    }
+    .partner-detail span {
+        color: #666;
+    }
+</style>
+<script>
+let map;
+let markers = {};
+let polyline;
+let trackingUpdates = [];
+
+function initMap() {
+    const defaultLocation = { lat: 26.5124, lng: 80.2394 }; // IIT Kanpur
+    
+    map = new google.maps.Map(document.getElementById('delivery-map'), {
+        zoom: 16,
+        center: defaultLocation,
+        mapTypeId: 'roadmap'
+    });
+
+    // Add vendor location marker
+    {% if order.vendor.google_maps_location %}
+        const vendorCoords = parseGoogleMapsUrl('{{ order.vendor.google_maps_location }}');
+        if (vendorCoords) {
+            markers.vendor = new google.maps.Marker({
+                position: vendorCoords,
+                map: map,
+                title: '{{ order.vendor.outlet_name }}',
+                icon: 'http://maps.google.com/mapfiles/ms/icons/orange-dot.png'
+            });
+        }
+    {% endif %}
+
+    // Add student location (default to campus)
+    markers.student = new google.maps.Marker({
+        position: defaultLocation,
+        map: map,
+        title: 'Your Location',
+        icon: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png'
+    });
+
+    // Load tracking updates
+    loadTrackingUpdates();
+    
+    // Refresh tracking every 5 seconds
+    setInterval(loadTrackingUpdates, 5000);
+}
+
+function parseGoogleMapsUrl(url) {
+    const match = url.match(/query=(-?\d+\.?\d*),(-?\d+\.?\d*)/);
+    if (match) {
+        return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+    }
+    return null;
+}
+
+function loadTrackingUpdates() {
+    fetch('{% url "get_order_tracking_updates" order.id %}')
+    .then(r => r.json())
+    .then(data => {
+        if (data.tracking_updates && data.tracking_updates.length > 0) {
+            const updates = data.tracking_updates;
+            
+            // Update delivery partner location
+            if (updates.length > 0) {
+                const latest = updates[0];
+                const partnerLocation = { lat: latest.latitude, lng: latest.longitude };
+                
+                if (markers.delivery) {
+                    markers.delivery.setPosition(partnerLocation);
+                } else {
+                    markers.delivery = new google.maps.Marker({
+                        position: partnerLocation,
+                        map: map,
+                        title: 'Delivery Partner',
+                        icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+                    });
+                }
+                
+                // Center map on delivery partner
+                map.setCenter(partnerLocation);
+            }
+        }
+    });
+}
+
+// Initialize map when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    initMap();
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h1 class="mb-1">Order Details</h1>
+    <p class="text-muted">Track your delivery in real-time</p>
+</div>
+
+{% if order.delivery_status == 'OUT_FOR_DELIVERY' %}
+    <div class="alert alert-warning alert-dismissible fade show mb-4" role="alert" style="background-color: #fff3cd; border-color: #ffc107; border-left: 4px solid #ff6b00;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 1.5rem;">🚗</span>
+            <div>
+                <strong>Your order is on the way!</strong>
+                <p class="mb-0" style="margin-top: 5px;">Your delivery partner is heading to your location. Check the map below to track them in real-time.</p>
+            </div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+{% endif %}
+
+<div class="row">
+    <div class="col-lg-8">
+        <!-- Order Code & Status -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <div>
+                        <h5 class="mb-1">Order #<span class="text-ff6b00" style="color: #ff6b00;">{{ order.order_code }}</span></h5>
+                        <p class="text-muted mb-0">{{ order.vendor.outlet_name }}</p>
+                    </div>
+                    <div style="text-align: right;">
+                        <span class="badge bg-success" style="padding: 8px 12px; font-size: 0.95rem;">
+                            <i class="fas fa-rupee-sign"></i> ₹{{ order.total_amount }}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Delivery Address -->
+                <div style="background-color: #f0f0f0; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                    <strong>📍 Delivery Address</strong>
+                    <p class="mb-0" style="margin-top: 8px;">{{ order.delivery_address }}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Map Tracking -->
+        {% if order.delivery_status == 'OUT_FOR_DELIVERY' %}
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">📍 Live Delivery Tracking</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div id="delivery-map"></div>
+                </div>
+            </div>
+        {% endif %}
+
+        <!-- Order Timeline -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">📋 Order Progress</h5>
+            </div>
+            <div class="card-body">
+                <div class="order-timeline">
+                    <!-- Payment Status -->
+                    <div class="timeline-item">
+                        <div class="timeline-marker {% if order.payment_status == 'COMPLETED' %}completed{% elif order.payment_status == 'PENDING' %}pending{% endif %}">
+                            {% if order.payment_status == 'COMPLETED' %}✓{% else %}1{% endif %}
+                        </div>
+                        <div class="timeline-content">
+                            <div class="timeline-title">Payment {% if order.payment_status == 'COMPLETED' %}Completed{% else %}Pending{% endif %}</div>
+                            <div class="timeline-time">{{ order.created_at|date:"M d, Y H:i" }}</div>
+                        </div>
+                    </div>
+
+                    <!-- Vendor Decision -->
+                    <div class="timeline-item">
+                        <div class="timeline-marker {% if order.vendor_decision == 'ACCEPTED' %}completed{% elif order.vendor_decision == 'PENDING' %}pending{% else %}pending{% endif %}">
+                            {% if order.vendor_decision == 'ACCEPTED' %}✓{% else %}2{% endif %}
+                        </div>
+                        <div class="timeline-content">
+                            <div class="timeline-title">Order {{ order.get_vendor_decision_display }}</div>
+                            {% if order.vendor_decision == 'ACCEPTED' %}
+                                <div class="timeline-time">{{ order.updated_at|date:"M d, Y H:i" }}</div>
+                            {% else %}
+                                <div class="timeline-time">Waiting for vendor response...</div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Preparation Status -->
+                    <div class="timeline-item">
+                        <div class="timeline-marker {% if order.vendor_status == 'READY' %}completed{% elif order.vendor_status != 'NOT_STARTED' %}active{% else %}pending{% endif %}">
+                            {% if order.vendor_status == 'READY' %}✓{% else %}3{% endif %}
+                        </div>
+                        <div class="timeline-content">
+                            <div class="timeline-title">Preparation: {{ order.get_vendor_status_display }}</div>
+                            {% if order.vendor_status != 'NOT_STARTED' %}
+                                <div class="timeline-time">In progress...</div>
+                            {% else %}
+                                <div class="timeline-time">Waiting to start...</div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Delivery Status -->
+                    <div class="timeline-item">
+                        <div class="timeline-marker {% if order.delivery_status == 'DELIVERED' %}completed{% elif order.delivery_status == 'OUT_FOR_DELIVERY' %}active{% else %}pending{% endif %}">
+                            {% if order.delivery_status == 'DELIVERED' %}✓{% else %}4{% endif %}
+                        </div>
+                        <div class="timeline-content">
+                            <div class="timeline-title">Delivery: {{ order.get_delivery_status_display }}</div>
+                            {% if order.delivery_status == 'OUT_FOR_DELIVERY' %}
+                                <div class="timeline-time">On the way to you...</div>
+                            {% elif order.delivery_status == 'DELIVERED' %}
+                                <div class="timeline-time">{{ order.updated_at|date:"M d, Y H:i" }}</div>
+                            {% else %}
+                                <div class="timeline-time">Waiting for pickup...</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Order Items -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">🍽️ Items Ordered</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Item</th>
+                            <th>Price</th>
+                            <th>Quantity</th>
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                            <tr>
+                                <td>{{ item.item_name }}</td>
+                                <td>₹{{ item.unit_price }}</td>
+                                <td>{{ item.quantity }}</td>
+                                <td><strong>₹{{ item.line_total }}</strong></td>
+                            </tr>
+                        {% endfor %}
+                        <tr class="table-light">
+                            <td colspan="3" style="text-align: right;"><strong>Total:</strong></td>
+                            <td><strong style="color: #ff6b00;">₹{{ order.total_amount }}</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="col-lg-4">
+        <!-- Delivery Partner Info -->
+        {% if delivery_assignment %}
+            <div class="card mb-4" style="border: 2px solid #28a745;">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">🚗 Your Delivery Partner</h5>
+                </div>
+                <div class="card-body">
+                    <div class="partner-name">{{ delivery_assignment.partner_name }}</div>
+                    
+                    <div class="partner-info">
+                        <div class="partner-detail">
+                            <label>📱 Phone:</label>
+                            <span>{{ delivery_assignment.partner_phone }}</span>
+                        </div>
+                        <div class="partner-detail">
+                            <label>🚗 Vehicle:</label>
+                            <span>{{ delivery_assignment.partner_vehicle }}</span>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 15px;">
+                        <a href="tel:{{ delivery_assignment.partner_phone }}" class="btn btn-success w-100 d-flex align-items-center justify-content-center gap-2">
+                            <span>📞</span> Call Delivery Partner
+                        </a>
+                    </div>
+                </div>
+            </div>
+        {% else %}
+            <div class="alert alert-info mb-4">
+                <h6 class="mb-2">🚗 Delivery Partner</h6>
+                <p class="mb-0">A delivery partner will be assigned soon</p>
+            </div>
+        {% endif %}
+
+        <!-- Order Summary -->
+        <div class="card mb-4">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">💰 Order Summary</h5>
+            </div>
+            <div class="card-body">
+                <div class="info-item">
+                    <span>Subtotal</span>
+                    <strong>₹{{ order.total_amount }}</strong>
+                </div>
+                <div class="info-item">
+                    <span>Delivery</span>
+                    <strong class="text-success">Free</strong>
+                </div>
+                <div class="info-item">
+                    <span>Tax</span>
+                    <strong>₹0</strong>
+                </div>
+                <div class="info-item" style="border-bottom: 2px solid #ff6b00; margin-bottom: 15px; padding-bottom: 15px;">
+                    <strong>Total Amount</strong>
+                    <strong style="color: #ff6b00; font-size: 1.2rem;">₹{{ order.total_amount }}</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- Payment Info -->
+        <div class="card">
+            <div class="card-header bg-light">
+                <h5 class="mb-0">💳 Payment Info</h5>
+            </div>
+            <div class="card-body">
+                <div class="info-item">
+                    <span>Status</span>
+                    <span class="badge {% if order.payment_status == 'COMPLETED' %}bg-success{% elif order.payment_status == 'FAILED' %}bg-danger{% else %}bg-warning{% endif %}">
+                        {{ order.get_payment_status_display }}
+                    </span>
+                </div>
+                <div class="info-item">
+                    <span>Method</span>
+                    <strong>Razorpay</strong>
+                </div>
+                {% if order.payment %}
+                    <div class="info-item">
+                        <span>Payment ID</span>
+                        <small>{{ order.payment.razorpay_payment_id|default:"Pending" }}</small>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4">
+    <a href="{% url 'student_orders' %}" class="btn btn-outline-primary">← Back to Orders</a>
+</div>
+
+{% endblock %}

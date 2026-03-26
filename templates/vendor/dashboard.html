@@ -1,6 +1,370 @@
 {% extends 'base.html' %}
 {% block title %}Vendor Dashboard{% endblock %}
 {% block content %}
-<h2>Vendor Dashboard 🍽️</h2>
-<p>Coming soon...</p>
+
+<h2 class="mb-3">Vendor Dashboard</h2>
+
+<!-- Outlet location -->
+<div class="card mb-3">
+  <div class="card-body">
+    <h4 class="card-title">Outlet Location (Google Maps)</h4>
+    <form method="post" action="{% url 'vendor_update_location' %}">
+      {% csrf_token %}
+      <div class="mb-3">
+        <div class="text-muted small mb-2">Click anywhere on the map to select your outlet location.</div>
+        <div id="vendorOutletMap" style="height: 320px; width: 100%; border-radius: 12px; overflow: hidden; background: #eee;"></div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Search Address (Autocomplete)</label>
+        <input class="form-control" type="text" id="addressAutocomplete" placeholder="Start typing an address..." />
+        <div class="text-muted small mt-1">
+          Selecting an autocomplete result will auto-fill address + Maps link.
+        </div>
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Outlet Name</label>
+        <input class="form-control" type="text" name="outlet_name" value="{{ vendor_profile.outlet_name|default:'' }}">
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Google Maps Address</label>
+        <input class="form-control" type="text" name="google_maps_address" id="googleMapsAddress" placeholder="Selected address will appear here" value="{{ vendor_profile.google_maps_address|default:'' }}">
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Google Maps Link</label>
+        <input class="form-control" type="text" name="google_maps_location" id="googleMapsLink" placeholder="Generated Google Maps link will appear here" value="{{ vendor_profile.google_maps_location|default:'' }}">
+      </div>
+      <input type="hidden" name="lat" id="selectedLat" value="">
+      <input type="hidden" name="lng" id="selectedLng" value="">
+      <button type="submit" class="btn btn-primary">Save Location</button>
+    </form>
+  </div>
+</div>
+
+<!-- Menu -->
+<div class="card mb-3">
+  <div class="card-body">
+    <h4 class="card-title mb-3">Menu Management</h4>
+
+    <h5 class="mb-2">Add Menu Item</h5>
+    <form method="post" action="{% url 'vendor_menu_add' %}" enctype="multipart/form-data" class="row g-2 align-items-end mb-4">
+      {% csrf_token %}
+      <div class="col-md-3">
+        <label class="form-label">Name</label>
+        <input class="form-control" type="text" name="name" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Price</label>
+        <input class="form-control" type="number" name="price" step="0.01" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Description</label>
+        <input class="form-control" type="text" name="description">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Photo</label>
+        <input class="form-control" type="file" name="photo" accept="image/*">
+      </div>
+      <div class="col-12">
+        <button class="btn btn-primary" type="submit">Add Item</button>
+      </div>
+    </form>
+
+    <h5 class="mb-2">Existing Items</h5>
+    <div class="row g-3">
+      {% for item in menu_items %}
+      <div class="col-12">
+        <div class="card">
+          <div class="card-body">
+            <div class="d-flex gap-3 align-items-start">
+              <div style="min-width: 120px;">
+                {% if item.photo %}
+                  <img src="{{ item.photo.url }}" alt="{{ item.name }}" style="width:110px;height:80px;object-fit:cover;border-radius:8px;">
+                {% else %}
+                  <div class="text-muted">No photo</div>
+                {% endif %}
+              </div>
+              <div class="flex-grow-1">
+                <div class="mb-2">
+                  <strong>{{ item.name }}</strong>
+                  <div class="text-muted">Rs. {{ item.price }}</div>
+                </div>
+
+                <form method="post" action="{% url 'vendor_menu_update' item.id %}" enctype="multipart/form-data">
+                  {% csrf_token %}
+                  <div class="row g-2 align-items-end">
+                    <div class="col-md-2">
+                      <label class="form-label">New Price</label>
+                      <input class="form-control" type="number" name="price" step="0.01" value="{{ item.price }}">
+                    </div>
+                    <div class="col-md-4">
+                      <label class="form-label">New Description</label>
+                      <input class="form-control" type="text" name="description" value="{{ item.description }}">
+                    </div>
+                    <div class="col-md-3">
+                      <label class="form-label">New Photo (optional)</label>
+                      <input class="form-control" type="file" name="photo" accept="image/*">
+                    </div>
+                    <div class="col-md-2">
+                      <label class="form-label">Active</label>
+                      <select class="form-select" name="is_active">
+                        <option value="true" {% if item.is_active %}selected{% endif %}>Active</option>
+                        <option value="false" {% if not item.is_active %}selected{% endif %}>Inactive</option>
+                      </select>
+                    </div>
+                    <div class="col-12">
+                      <button type="submit" class="btn btn-primary mt-2">Update Item</button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% empty %}
+      <div class="col-12 text-muted">No menu items yet.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Incoming tickets + status tab -->
+<ul class="nav nav-tabs mb-3" id="vendorTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="tickets-tab" data-bs-toggle="tab" data-bs-target="#tickets" type="button" role="tab" aria-controls="tickets" aria-selected="true">
+      Incoming Tickets
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="status-tab" data-bs-toggle="tab" data-bs-target="#status" type="button" role="tab" aria-controls="status" aria-selected="false">
+      Update Order Status
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+  <div class="tab-pane fade show active" id="tickets" role="tabpanel" aria-labelledby="tickets-tab">
+    <div class="row g-3">
+      {% for order in incoming_tickets %}
+      <div class="col-12">
+        <div class="card">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+              <div>
+                <h5 class="mb-1">Order {{ order.order_code }}</h5>
+                <div class="text-muted">
+                  Student: {{ order.student.username }} ({{ order.student.phone }}) | {{ order.student.email }}
+                </div>
+              </div>
+              <div class="d-flex gap-2">
+                <form method="post" action="{% url 'vendor_ticket_accept' order.id %}">
+                  {% csrf_token %}
+                  <button class="btn btn-success btn-sm" type="submit">Accept</button>
+                </form>
+                <form method="post" action="{% url 'vendor_ticket_reject' order.id %}">
+                  {% csrf_token %}
+                  <button class="btn btn-danger btn-sm" type="submit">Reject</button>
+                </form>
+              </div>
+            </div>
+
+            <hr>
+            <div>
+              <strong>Items</strong>
+              <ul class="mb-0">
+                {% for it in order.items.all %}
+                  <li>
+                    {{ it.item_name }} x{{ it.quantity }} - Rs. {{ it.unit_price }}
+                  </li>
+                {% empty %}
+                  <li class="text-muted">No items found.</li>
+                {% endfor %}
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% empty %}
+      <div class="col-12 text-muted">No incoming tickets at the moment.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="status" role="tabpanel" aria-labelledby="status-tab">
+    <div class="row g-3">
+      {% for order in accepted_orders %}
+      <div class="col-12">
+        <div class="card">
+          <div class="card-body">
+            <h5 class="mb-1">Order {{ order.order_code }}</h5>
+            <div class="text-muted mb-2">
+              Student: {{ order.student.username }} | Current Vendor Status: {{ order.get_vendor_status_display }}
+            </div>
+
+            <form method="post" action="{% url 'vendor_order_status_update' order.id %}">
+              {% csrf_token %}
+              <div class="row g-2 align-items-end">
+                <div class="col-md-4">
+                  <label class="form-label">Set Status</label>
+                  <select class="form-select" name="vendor_status" required>
+                    <option value="NOT_STARTED" {% if order.vendor_status == 'NOT_STARTED' %}selected{% endif %}>Not started</option>
+                    <option value="PREPARING" {% if order.vendor_status == 'PREPARING' %}selected{% endif %}>Preparing</option>
+                    <option value="READY" {% if order.vendor_status == 'READY' %}selected{% endif %}>Ready</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <button class="btn btn-primary" type="submit">Update</button>
+                </div>
+              </div>
+            </form>
+
+            {% if order.vendor_status == 'READY' %}
+            <div class="mt-2">
+              <form method="post" action="{% url 'vendor_broadcast_delivery' order.id %}" style="display: inline;">
+                {% csrf_token %}
+                <button class="btn btn-success" type="submit">
+                  📢 Broadcast to Delivery Partners
+                </button>
+              </form>
+            </div>
+            {% endif %}
+
+            <hr>
+            <div>
+              <strong>Items</strong>
+              <ul class="mb-0">
+                {% for it in order.items.all %}
+                  <li>
+                    {{ it.item_name }} x{{ it.quantity }} - Rs. {{ it.unit_price }}
+                  </li>
+                {% empty %}
+                  <li class="text-muted">No items found.</li>
+                {% endfor %}
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% empty %}
+      <div class="col-12 text-muted">No accepted orders yet.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% if google_maps_api_key %}
+<script>
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+
+  function initVendorMap() {
+    const mapEl = document.getElementById('vendorOutletMap');
+    if (!mapEl || !window.google) return;
+
+    const defaultCenter = { lat: 26.5070, lng: 80.4360 }; // IIT Kanpur vicinity
+    const map = new google.maps.Map(mapEl, {
+      center: defaultCenter,
+      zoom: 15
+    });
+
+    const marker = new google.maps.Marker({
+      map: map,
+      position: null,
+      draggable: true
+    });
+
+    function setSelection(lat, lng) {
+      marker.setPosition({ lat: lat, lng: lng });
+      document.getElementById('selectedLat').value = lat;
+      document.getElementById('selectedLng').value = lng;
+    }
+
+    async function reverseGeocodeAndFill(lat, lng) {
+      const res = await fetch("{% url 'vendor_reverse_geocode_location' %}", {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ lat: lat, lng: lng })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Could not generate address');
+        return;
+      }
+
+      document.getElementById('googleMapsAddress').value = data.address || '';
+      document.getElementById('googleMapsLink').value = data.maps_link || '';
+    }
+
+    map.addListener('click', (e) => {
+      const lat = e.latLng.lat();
+      const lng = e.latLng.lng();
+      setSelection(lat, lng);
+      reverseGeocodeAndFill(lat, lng);
+    });
+
+    marker.addListener('dragend', (e) => {
+      const lat = e.latLng.lat();
+      const lng = e.latLng.lng();
+      setSelection(lat, lng);
+      reverseGeocodeAndFill(lat, lng);
+    });
+
+    // Address autocomplete using Places API.
+    const input = document.getElementById('addressAutocomplete');
+    if (input) {
+      const autocomplete = new google.maps.places.Autocomplete(input, {
+        // Restrict to India/campus region if you want later.
+        fields: ['formatted_address', 'geometry']
+      });
+
+      autocomplete.addListener('place_changed', () => {
+        const place = autocomplete.getPlace();
+        if (!place || !place.geometry || !place.geometry.location) {
+          return;
+        }
+
+        const lat = place.geometry.location.lat();
+        const lng = place.geometry.location.lng();
+
+        // Update the map center and marker position
+        map.setCenter({ lat: lat, lng: lng });
+        map.setZoom(17);
+        setSelection(lat, lng);
+
+        // We may still call reverse geocode, but if formatted address exists use it immediately.
+        const formatted = place.formatted_address || '';
+        if (formatted) {
+          document.getElementById('googleMapsAddress').value = formatted;
+          document.getElementById('googleMapsLink').value =
+            `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+        } else {
+          reverseGeocodeAndFill(lat, lng);
+        }
+      });
+    }
+  }
+</script>
+
+<script async defer
+  src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=places&callback=initVendorMap">
+</script>
+{% endif %}
+
 {% endblock %}

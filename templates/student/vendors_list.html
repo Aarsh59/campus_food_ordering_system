@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+{% block title %}Discover Vendors{% endblock %}
+
+{% block extra_js %}
+<style>
+    .vendor-card {
+        border: none;
+        cursor: pointer;
+        transition: all 0.3s;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .vendor-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 12px 30px rgba(0,0,0,0.15);
+    }
+    .vendor-badge {
+        position: absolute;
+        top: 15px;
+        right: 15px;
+        background-color: #ff6b00;
+        color: white;
+        padding: 8px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: bold;
+    }
+    .vendor-body {
+        padding: 20px;
+    }
+    .vendor-name {
+        font-size: 1.3rem;
+        font-weight: bold;
+        color: #333;
+        margin-bottom: 8px;
+    }
+    .vendor-cuisine {
+        color: #ff6b00;
+        font-weight: 600;
+        margin-bottom: 10px;
+    }
+    .vendor-hours {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 10px;
+    }
+    .btn-group-vendor {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex justify-content-between align-items-center">
+    <div>
+        <h1 class="mb-1">🏪 Discover Vendors</h1>
+        <p class="text-muted">Choose from multiple restaurants on campus</p>
+    </div>
+    <div>
+        <a href="{% url 'student_view_cart' %}" class="btn btn-primary">
+            🛒 Cart <span class="badge bg-danger">{{ cart_count }}</span>
+        </a>
+    </div>
+</div>
+
+{% if vendors %}
+    <div class="row">
+        {% for vendor in vendors %}
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card vendor-card h-100">
+                    <div class="card-body vendor-body position-relative">
+                        <div class="vendor-badge">{{ vendor.menu_items.count }} items</div>
+                        <h5 class="vendor-name">{{ vendor.outlet_name }}</h5>
+                        {% if vendor.cuisine_type %}
+                            <div class="vendor-cuisine">{{ vendor.cuisine_type }}</div>
+                        {% endif %}
+                        {% if vendor.operating_hours %}
+                            <div class="vendor-hours">
+                                ⏰ {{ vendor.operating_hours }}
+                            </div>
+                        {% endif %}
+                        {% if vendor.google_maps_address %}
+                            <div class="vendor-hours mb-3">
+                                📍 {{ vendor.google_maps_address }}
+                            </div>
+                        {% endif %}
+                        <div class="btn-group-vendor">
+                            <a href="{% url 'student_vendor_detail' vendor.id %}" class="btn btn-primary btn-sm flex-grow-1">
+                                View Menu
+                            </a>
+                            {% if vendor.google_maps_location %}
+                                <a href="{{ vendor.google_maps_location }}" target="_blank" class="btn btn-outline-secondary btn-sm">
+                                    📍 Map
+                                </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="alert alert-info text-center py-5">
+        <h5>No vendors available</h5>
+        <p class="mb-0">Please check back soon for vendors on campus</p>
+    </div>
+{% endif %}
+
+{% endblock %}
