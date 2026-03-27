@@ -221,11 +221,13 @@ def pending_view(request):
 
 
 # ─── Dashboards ──────────────────────────────────────────────────────────────
+@login_required
 def student_dashboard(request):
-    # Keep this page accessible even when logged out (existing tests rely on it).
-    notifications = []
-    if request.user.is_authenticated:
-        notifications = Notification.objects.filter(recipient=request.user).order_by('-created_at')[:50]
+    if request.user.role != User.Role.STUDENT:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    notifications = Notification.objects.filter(recipient=request.user).order_by('-created_at')[:50]
     return render(request, 'student/dashboard.html', {'notifications': notifications})
 
 
@@ -964,7 +966,7 @@ def student_order_history(request):
     history_orders = Order.objects.filter(
         student=request.user,
         delivery_status=Order.DeliveryStatus.DELIVERED
-    ).select_related('vendor').prefetch_related('items').order_by('-delivered_at')
+    ).select_related('vendor').prefetch_related('items').order_by('-updated_at')
     
     # Group by vendor for quick reordering
     vendors_with_orders = {}

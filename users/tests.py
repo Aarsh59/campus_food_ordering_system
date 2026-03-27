@@ -1,7 +1,15 @@
 from django.test import TestCase, Client
 from django.urls import reverse
 from django.core import mail
-from .models import User, StaffApplication
+from django.utils import timezone
+from datetime import timedelta
+from decimal import Decimal
+from unittest.mock import patch
+from .models import (
+    User, StaffApplication, VendorProfile, MenuItem, Order, OrderItem,
+    Notification, Cart, CartItem, Payment, DeliveryAssignment,
+    DeliveryBroadcast, DeliveryBroadcastResponse, OrderTracking
+)
 
 
 # ─── Model Tests ──────────────────────────────────────────────────────────────
@@ -335,3 +343,936 @@ class SignalTest(TestCase):
         self.assertEqual(
             User.objects.filter(email='john@vendor.com').count(), 1
         )
+
+
+# ─── Model Tests for Student/Vendor/Delivery ───────────────────────────────────
+class VendorProfileModelTest(TestCase):
+
+    def setUp(self):
+        self.vendor_user = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+
+    def test_vendor_profile_creation(self):
+        profile = VendorProfile.objects.create(
+            user=self.vendor_user,
+            outlet_name='Test Outlet',
+            google_maps_location='https://maps.google.com/?q=26.5124,80.2394'
+        )
+        self.assertEqual(str(profile), 'Test Outlet')
+
+    def test_vendor_profile_str_without_outlet_name(self):
+        profile = VendorProfile.objects.create(user=self.vendor_user)
+        self.assertEqual(str(profile), 'vendor1')
+
+
+class MenuItemModelTest(TestCase):
+
+    def setUp(self):
+        self.vendor_user = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor_user,
+            outlet_name='Test Outlet'
+        )
+
+    def test_menu_item_creation(self):
+        item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Test Item',
+            price=Decimal('100.00'),
+            description='Test description'
+        )
+        self.assertEqual(str(item), 'Test Outlet - Test Item')
+        self.assertTrue(item.is_active)
+
+
+class OrderModelTest(TestCase):
+
+    def setUp(self):
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.vendor_user = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor_user,
+            outlet_name='Test Outlet'
+        )
+
+    def test_order_creation_generates_order_code(self):
+        order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('200.00')
+        )
+        self.assertTrue(order.order_code.startswith('ORD-'))
+        self.assertEqual(str(order), f"{order.order_code} (student1 -> Test Outlet)")
+
+    def test_order_default_statuses(self):
+        order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('200.00')
+        )
+        self.assertEqual(order.vendor_decision, Order.VendorDecision.PENDING)
+        self.assertEqual(order.vendor_status, Order.VendorStatus.NOT_STARTED)
+        self.assertEqual(order.delivery_status, Order.DeliveryStatus.NOT_STARTED)
+        self.assertEqual(order.payment_status, Order.PaymentStatus.PENDING)
+
+
+class OrderItemModelTest(TestCase):
+
+    def setUp(self):
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.vendor_user = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor_user,
+            outlet_name='Test Outlet'
+        )
+        self.order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('200.00')
+        )
+
+    def test_order_item_line_total(self):
+        item = OrderItem.objects.create(
+            order=self.order,
+            item_name='Test Item',
+            unit_price=Decimal('50.00'),
+            quantity=2
+        )
+        self.assertEqual(item.line_total(), Decimal('100.00'))
+        self.assertEqual(str(item), 'Test Item x2')
+
+
+class CartModelTest(TestCase):
+
+    def setUp(self):
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.vendor_user = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor_user,
+            outlet_name='Test Outlet'
+        )
+        self.menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Test Item',
+            price=Decimal('50.00')
+        )
+
+    def test_cart_creation(self):
+        cart = Cart.objects.create(student=self.student)
+        self.assertEqual(cart.get_total(), 0)
+        self.assertEqual(str(cart), "Cart for student1")
+
+    def test_cart_get_total(self):
+        cart = Cart.objects.create(student=self.student)
+        CartItem.objects.create(cart=cart, menu_item=self.menu_item, quantity=2)
+        self.assertEqual(cart.get_total(), Decimal('100.00'))
+
+
+class CartItemModelTest(TestCase):
+
+    def setUp(self):
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.vendor_user = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor_user,
+            outlet_name='Test Outlet'
+        )
+        self.menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Test Item',
+            price=Decimal('50.00')
+        )
+        self.cart = Cart.objects.create(student=self.student)
+
+    def test_cart_item_subtotal(self):
+        item = CartItem.objects.create(cart=self.cart, menu_item=self.menu_item, quantity=3)
+        self.assertEqual(item.get_subtotal(), Decimal('150.00'))
+        self.assertEqual(str(item), 'Test Item x3 in student1\'s cart')
+
+    def test_unique_cart_menu_item_constraint(self):
+        CartItem.objects.create(cart=self.cart, menu_item=self.menu_item, quantity=1)
+        with self.assertRaises(Exception):  # IntegrityError
+            CartItem.objects.create(cart=self.cart, menu_item=self.menu_item, quantity=2)
+
+
+# ─── Student Module Tests ─────────────────────────────────────────────────────
+class StudentDashboardTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.client.login(username='student1', password='Test@1234')
+
+    def test_student_dashboard_access(self):
+        response = self.client.get(reverse('student_dashboard'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'student/dashboard.html')
+
+    def test_unauthorized_access_to_student_dashboard(self):
+        vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.client.login(username='vendor1', password='Test@1234')
+        response = self.client.get(reverse('student_dashboard'))
+        self.assertEqual(response.status_code, 302)  # Redirect to login
+
+
+class StudentVendorsListTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.client.login(username='student1', password='Test@1234')
+
+        # Create vendors
+        self.vendor1 = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile1 = VendorProfile.objects.create(
+            user=self.vendor1,
+            outlet_name='Vendor 1',
+            cuisine_type='Fast Food'
+        )
+
+        self.vendor2 = User.objects.create_user(
+            username='vendor2',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile2 = VendorProfile.objects.create(
+            user=self.vendor2,
+            outlet_name='Vendor 2',
+            cuisine_type='Italian'
+        )
+
+    def test_vendors_list_display(self):
+        response = self.client.get(reverse('student_vendors_list'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'student/vendors_list.html')
+        self.assertContains(response, 'Vendor 1')
+        self.assertContains(response, 'Vendor 2')
+
+    def test_vendors_list_filter_by_cuisine(self):
+        response = self.client.get(reverse('student_vendors_list') + '?cuisine=Fast+Food')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Vendor 1')
+        self.assertNotContains(response, 'Vendor 2')
+
+
+class StudentVendorDetailTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.client.login(username='student1', password='Test@1234')
+
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Vendor',
+            cuisine_type='Fast Food'
+        )
+        self.menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Burger',
+            price=Decimal('100.00'),
+            description='Delicious burger'
+        )
+
+    def test_vendor_detail_display(self):
+        response = self.client.get(reverse('student_vendor_detail', args=[self.vendor_profile.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'student/vendor_detail.html')
+        self.assertContains(response, 'Test Vendor')
+        self.assertContains(response, 'Burger')
+
+
+class StudentCartTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.client.login(username='student1', password='Test@1234')
+
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Vendor'
+        )
+        self.menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Burger',
+            price=Decimal('100.00')
+        )
+
+    def test_add_to_cart(self):
+        response = self.client.post(reverse('student_add_to_cart'), {
+            'menu_item_id': self.menu_item.id,
+            'quantity': 2
+        })
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        cart = Cart.objects.get(student=self.student)
+        cart_item = CartItem.objects.get(cart=cart, menu_item=self.menu_item)
+        self.assertEqual(cart_item.quantity, 2)
+
+    def test_view_cart(self):
+        cart = Cart.objects.create(student=self.student)
+        CartItem.objects.create(cart=cart, menu_item=self.menu_item, quantity=1)
+        response = self.client.get(reverse('student_view_cart'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'student/cart.html')
+        self.assertContains(response, 'Burger')
+
+    def test_remove_from_cart(self):
+        cart = Cart.objects.create(student=self.student)
+        cart_item = CartItem.objects.create(cart=cart, menu_item=self.menu_item, quantity=1)
+        response = self.client.post(reverse('student_remove_from_cart', args=[cart_item.id]))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertFalse(CartItem.objects.filter(id=cart_item.id).exists())
+
+    def test_update_cart_item(self):
+        cart = Cart.objects.create(student=self.student)
+        cart_item = CartItem.objects.create(cart=cart, menu_item=self.menu_item, quantity=1)
+        response = self.client.post(reverse('student_update_cart_item', args=[cart_item.id]), {
+            'quantity': 3
+        })
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        cart_item.refresh_from_db()
+        self.assertEqual(cart_item.quantity, 3)
+
+
+class StudentCheckoutTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.client.login(username='student1', password='Test@1234')
+
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Vendor'
+        )
+        self.menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Burger',
+            price=Decimal('100.00')
+        )
+        self.cart = Cart.objects.create(student=self.student)
+        CartItem.objects.create(cart=self.cart, menu_item=self.menu_item, quantity=2)
+
+    def test_checkout_page_loads(self):
+        response = self.client.get(reverse('student_checkout'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'student/checkout.html')
+
+    def test_checkout_with_empty_cart(self):
+        CartItem.objects.all().delete()  # Empty cart
+        response = self.client.get(reverse('student_checkout'))
+        self.assertEqual(response.status_code, 302)  # Redirect to cart
+
+
+class StudentOrdersTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.client.login(username='student1', password='Test@1234')
+
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Vendor'
+        )
+        self.order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('200.00')
+        )
+
+    def test_orders_list(self):
+        response = self.client.get(reverse('student_orders'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'student/orders.html')
+        self.assertContains(response, self.order.order_code)
+
+    def test_order_detail(self):
+        response = self.client.get(reverse('student_order_detail', args=[self.order.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'student/order_detail.html')
+        self.assertContains(response, self.order.order_code)
+
+
+# ─── Vendor Module Tests ──────────────────────────────────────────────────────
+class VendorDashboardTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Outlet'
+        )
+        self.client.login(username='vendor1', password='Test@1234')
+
+    def test_vendor_dashboard_access(self):
+        response = self.client.get(reverse('vendor_dashboard'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'vendor/dashboard.html')
+
+    def test_unauthorized_access_to_vendor_dashboard(self):
+        student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.client.login(username='student1', password='Test@1234')
+        response = self.client.get(reverse('vendor_dashboard'))
+        self.assertEqual(response.status_code, 302)  # Redirect to login
+
+
+class VendorMenuTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Outlet'
+        )
+        self.client.login(username='vendor1', password='Test@1234')
+
+    def test_add_menu_item(self):
+        response = self.client.post(reverse('vendor_menu_add'), {
+            'name': 'New Item',
+            'price': '150.00',
+            'description': 'New description'
+        })
+        self.assertEqual(response.status_code, 302)  # Redirect to dashboard
+        self.assertTrue(MenuItem.objects.filter(name='New Item').exists())
+
+    def test_update_menu_item(self):
+        menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Old Item',
+            price=Decimal('100.00')
+        )
+        response = self.client.post(reverse('vendor_menu_update', args=[menu_item.id]), {
+            'name': 'Updated Item',
+            'price': '120.00',
+            'description': 'Updated description'
+        })
+        self.assertEqual(response.status_code, 302)
+        menu_item.refresh_from_db()
+        self.assertEqual(menu_item.name, 'Updated Item')
+        self.assertEqual(menu_item.price, Decimal('120.00'))
+
+
+class VendorOrderManagementTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Outlet'
+        )
+        self.client.login(username='vendor1', password='Test@1234')
+
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('200.00')
+        )
+
+    def test_accept_order(self):
+        response = self.client.post(reverse('vendor_ticket_accept', args=[self.order.id]))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.vendor_decision, Order.VendorDecision.ACCEPTED)
+
+    def test_reject_order(self):
+        response = self.client.post(reverse('vendor_ticket_reject', args=[self.order.id]))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.vendor_decision, Order.VendorDecision.REJECTED)
+
+    def test_update_order_status(self):
+        self.order.vendor_decision = Order.VendorDecision.ACCEPTED
+        self.order.save()
+        response = self.client.post(reverse('vendor_order_status_update', args=[self.order.id]), {
+            'status': 'PREPARING'
+        })
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.vendor_status, Order.VendorStatus.PREPARING)
+
+
+# ─── Delivery Module Tests ────────────────────────────────────────────────────
+class DeliveryDashboardTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.delivery = User.objects.create_user(
+            username='delivery1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.DELIVERY
+        )
+        self.client.login(username='delivery1', password='Test@1234')
+
+    def test_delivery_dashboard_access(self):
+        response = self.client.get(reverse('delivery_dashboard'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'delivery/dashboard.html')
+
+    def test_unauthorized_access_to_delivery_dashboard(self):
+        student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.client.login(username='student1', password='Test@1234')
+        response = self.client.get(reverse('delivery_dashboard'))
+        self.assertEqual(response.status_code, 302)  # Redirect to login
+
+
+class DeliveryBroadcastTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Outlet'
+        )
+        self.client.login(username='vendor1', password='Test@1234')
+
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('200.00'),
+            vendor_status=Order.VendorStatus.READY
+        )
+
+    def test_broadcast_delivery(self):
+        response = self.client.post(reverse('vendor_broadcast_delivery', args=[self.order.id]))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertTrue(DeliveryBroadcast.objects.filter(order=self.order).exists())
+
+
+class DeliveryAcceptanceTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.delivery = User.objects.create_user(
+            username='delivery1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.DELIVERY
+        )
+        self.client.login(username='delivery1', password='Test@1234')
+
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Outlet'
+        )
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('200.00')
+        )
+        self.broadcast = DeliveryBroadcast.objects.create(
+            order=self.order,
+            status=DeliveryBroadcast.BroadcastStatus.ACTIVE,
+            expires_at=timezone.now() + timedelta(minutes=10)
+        )
+        DeliveryBroadcastResponse.objects.create(
+            broadcast=self.broadcast,
+            delivery_partner=self.delivery,
+            status=DeliveryBroadcastResponse.ResponseStatus.PENDING
+        )
+
+    def test_accept_broadcast(self):
+        response = self.client.post(reverse('delivery_accept_broadcast', args=[self.broadcast.id]))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.broadcast.refresh_from_db()
+        self.assertEqual(self.broadcast.status, DeliveryBroadcast.BroadcastStatus.ACCEPTED)
+        self.assertTrue(DeliveryAssignment.objects.filter(order=self.order).exists())
+
+    def test_reject_broadcast(self):
+        response = self.client.post(reverse('delivery_reject_broadcast', args=[self.broadcast.id]), {
+            'reason': 'Too far'
+        })
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        response_obj = DeliveryBroadcastResponse.objects.get(
+            broadcast=self.broadcast,
+            delivery_partner=self.delivery
+        )
+        self.assertEqual(response_obj.status, DeliveryBroadcastResponse.ResponseStatus.REJECTED)
+
+
+class DeliveryAssignmentTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.delivery = User.objects.create_user(
+            username='delivery1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.DELIVERY
+        )
+        self.client.login(username='delivery1', password='Test@1234')
+
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Outlet'
+        )
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('200.00')
+        )
+        self.assignment = DeliveryAssignment.objects.create(
+            order=self.order,
+            delivery_partner=self.delivery,
+            status=DeliveryAssignment.AssignmentStatus.ACCEPTED
+        )
+
+    def test_mark_picked_up(self):
+        response = self.client.post(reverse('delivery_mark_picked_up', args=[self.assignment.id]))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assignment.refresh_from_db()
+        self.assertEqual(self.assignment.status, DeliveryAssignment.AssignmentStatus.PICKED_UP)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.delivery_status, Order.DeliveryStatus.OUT_FOR_DELIVERY)
+
+    def test_mark_delivered(self):
+        self.assignment.status = DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY
+        self.assignment.save()
+        response = self.client.post(reverse('delivery_mark_delivered', args=[self.assignment.id]))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assignment.refresh_from_db()
+        self.assertEqual(self.assignment.status, DeliveryAssignment.AssignmentStatus.DELIVERED)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.delivery_status, Order.DeliveryStatus.DELIVERED)
+
+
+# ─── Integration Tests ────────────────────────────────────────────────────────
+class EndToEndOrderingTest(TestCase):
+    """
+    Test the complete flow from student ordering to delivery completion.
+    """
+
+    def setUp(self):
+        # Mock Razorpay settings
+        from django.conf import settings
+        if not hasattr(settings, 'RAZORPAY_KEY_ID'):
+            settings.RAZORPAY_KEY_ID = 'test_key_id'
+            settings.RAZORPAY_KEY_SECRET = 'test_key_secret'
+        
+        # Create users
+        self.student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Test Outlet'
+        )
+        self.delivery = User.objects.create_user(
+            username='delivery1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.DELIVERY
+        )
+
+        # Create menu item
+        self.menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Test Burger',
+            price=Decimal('100.00'),
+            description='Delicious burger'
+        )
+
+    @patch('users.views.razorpay.Client')
+    def test_complete_order_flow(self, mock_razorpay_client):
+        # Mock Razorpay client
+        mock_client_instance = mock_razorpay_client.return_value
+        mock_client_instance.order.create.return_value = {
+            'id': 'order_test123',
+            'amount': 20000,
+            'currency': 'INR'
+        }
+        # Step 1: Student adds item to cart
+        client = Client()
+        client.login(username='student1', password='Test@1234')
+        response = client.post(reverse('student_add_to_cart', args=[self.menu_item.id]), {
+            'quantity': 2
+        })
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+
+        # Step 2: Student checks out and creates order
+        response = client.post(reverse('student_create_order'), {
+            'delivery_address': 'IIT Kanpur, Hall 1'
+        })
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        order_ids = data['orders']
+        order_id = order_ids[0]  # Get first order
+        order = Order.objects.get(id=order_id)
+        self.assertEqual(order.student, self.student)
+        self.assertEqual(order.vendor, self.vendor_profile)
+        self.assertEqual(order.total_amount, Decimal('200.00'))
+
+        # Step 3: Vendor accepts the order
+        client.logout()
+        client.login(username='vendor1', password='Test@1234')
+        response = client.post(reverse('vendor_ticket_accept', args=[order.id]), follow=True)
+        self.assertEqual(response.status_code, 200)  # After redirect
+        order.refresh_from_db()
+        self.assertEqual(order.vendor_decision, Order.VendorDecision.ACCEPTED)
+
+        # Step 4: Vendor marks order as ready and broadcasts
+        order.vendor_status = Order.VendorStatus.READY
+        order.save()
+        response = client.post(reverse('vendor_broadcast_delivery', args=[order.id]))
+        self.assertEqual(response.status_code, 200)
+        broadcast = DeliveryBroadcast.objects.get(order=order)
+        self.assertEqual(broadcast.status, DeliveryBroadcast.BroadcastStatus.ACTIVE)
+
+        # Step 5: Delivery partner accepts the broadcast
+        client.logout()
+        client.login(username='delivery1', password='Test@1234')
+        response = client.post(reverse('delivery_accept_broadcast', args=[broadcast.id]))
+        self.assertEqual(response.status_code, 200)
+        assignment = DeliveryAssignment.objects.get(order=order)
+        self.assertEqual(assignment.delivery_partner, self.delivery)
+        self.assertEqual(assignment.status, DeliveryAssignment.AssignmentStatus.ACCEPTED)
+
+        # Step 6: Delivery partner marks as picked up
+        response = client.post(reverse('delivery_mark_picked_up', args=[assignment.id]))
+        self.assertEqual(response.status_code, 200)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, DeliveryAssignment.AssignmentStatus.PICKED_UP)
+        order.refresh_from_db()
+        self.assertEqual(order.delivery_status, Order.DeliveryStatus.OUT_FOR_DELIVERY)
+
+        # Step 7: Delivery partner marks as delivered
+        assignment.status = DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY
+        assignment.save()
+        response = client.post(reverse('delivery_mark_delivered', args=[assignment.id]))
+        self.assertEqual(response.status_code, 200)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, DeliveryAssignment.AssignmentStatus.DELIVERED)
+        order.refresh_from_db()
+        self.assertEqual(order.delivery_status, Order.DeliveryStatus.DELIVERED)
+
+        # Verify notifications were created
+        student_notifications = Notification.objects.filter(recipient=self.student)
+        self.assertTrue(student_notifications.exists())
+
+        # Verify order history works
+        client.logout()
+        client.login(username='student1', password='Test@1234')
+        response = client.get(reverse('student_order_history'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, order.order_code)
+        self.assertContains(response, order.order_code)
