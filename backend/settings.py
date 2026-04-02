@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import sys
 import dj_database_url
+from urllib.parse import urlparse
 
 # ─── Base ────────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -11,10 +12,37 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-temp-secret')
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('1', 'true', 'yes')
 
+
+def _split_env_list(name):
+    return [item.strip() for item in os.getenv(name, '').split(',') if item.strip()]
+
+
+def _normalize_origin(value):
+    value = (value or '').strip()
+    if not value:
+        return ''
+    if '://' not in value:
+        value = f'https://{value}'
+    parsed = urlparse(value)
+    if not parsed.scheme or not parsed.netloc:
+        return ''
+    return f'{parsed.scheme}://{parsed.netloc}'
+
 if DEBUG:
     ALLOWED_HOSTS = ['*']
 else:
-    ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', '').split(',') if host.strip()]
+    ALLOWED_HOSTS = _split_env_list('ALLOWED_HOSTS')
+
+extra_hosts = []
+for env_name in ('RENDER_EXTERNAL_HOSTNAME', 'RAILWAY_PUBLIC_DOMAIN'):
+    extra_hosts.extend(_split_env_list(env_name))
+
+for env_name in ('APP_URL', 'PUBLIC_URL', 'RENDER_EXTERNAL_URL'):
+    parsed = urlparse(os.getenv(env_name, '').strip())
+    if parsed.hostname:
+        extra_hosts.append(parsed.hostname)
+
+ALLOWED_HOSTS = list(dict.fromkeys(ALLOWED_HOSTS + extra_hosts))
 
 # ─── Apps ────────────────────────────────────────────────────────────────────
 INSTALLED_APPS = [
@@ -107,6 +135,24 @@ REST_FRAMEWORK = {
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 CORS_ALLOW_ALL_ORIGINS = True
 
+# ─── CSRF / Proxy / Cookies ──────────────────────────────────────────────────
+csrf_trusted_origins = [
+    _normalize_origin(origin)
+    for origin in _split_env_list('CSRF_TRUSTED_ORIGINS')
+]
+
+for env_name in ('APP_URL', 'PUBLIC_URL', 'RENDER_EXTERNAL_URL'):
+    origin = _normalize_origin(os.getenv(env_name, ''))
+    if origin:
+        csrf_trusted_origins.append(origin)
+
+CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(origin for origin in csrf_trusted_origins if origin))
+
+# Trust HTTPS forwarded by platforms like Render/Railway/Nginx so CSRF checks
+# see the original secure origin instead of the internal Gunicorn HTTP request.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+
 # ─── Internationalisation ─────────────────────────────────────────────────────
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE     = 'Asia/Kolkata'
@@ -142,5 +188,10 @@ DEFAULT_FROM_EMAIL  = os.getenv('EMAIL_USER')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 SESSION_COOKIE_AGE = 3600  # 1 hour
 SESSION_SAVE_EVERY_REQUEST = True
+
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 if 'test' in sys.argv:
     EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
