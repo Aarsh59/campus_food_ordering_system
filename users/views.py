@@ -8,6 +8,7 @@ from django.core.mail import send_mail
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.utils import timezone
+from django.db import transaction
 from .models import (
     User,
     StaffApplication,
@@ -1321,73 +1322,84 @@ def delivery_accept_broadcast(request, broadcast_id: int):
     if request.user.role != User.Role.DELIVERY:
         return JsonResponse({'error': 'Unauthorized'}, status=403)
     
-    broadcast = get_object_or_404(DeliveryBroadcast, id=broadcast_id)
-    
-    if broadcast.status != DeliveryBroadcast.BroadcastStatus.ACTIVE:
-        return JsonResponse({'error': 'Broadcast is no longer active'}, status=400)
-    
-    if timezone.now() > broadcast.expires_at:
-        broadcast.status = DeliveryBroadcast.BroadcastStatus.EXPIRED
-        broadcast.save()
-        return JsonResponse({'error': 'Broadcast has expired'}, status=400)
-    
-    # Check if already assigned
-    if broadcast.accepted_by:
-        return JsonResponse({'error': 'Already accepted by another partner'}, status=400)
-    
-    # Accept the broadcast
-    broadcast.status = DeliveryBroadcast.BroadcastStatus.ACCEPTED
-    broadcast.accepted_by = request.user
-    broadcast.accepted_at = timezone.now()
-    broadcast.save()
-    
-    # Get partner details from StaffApplication
-    app = StaffApplication.objects.filter(
-        email=request.user.email,
-        role_applied='DELIVERY'
-    ).first()
-    
-    # Create delivery assignment
-    assignment = DeliveryAssignment.objects.create(
-        order=broadcast.order,
-        delivery_partner=request.user,
-        status=DeliveryAssignment.AssignmentStatus.ACCEPTED,
-        accepted_at=timezone.now(),
-        partner_name=request.user.get_full_name() or request.user.username,
-        partner_phone=request.user.phone,
-        partner_vehicle=app.vehicle_number if app else '',
-    )
-    
-    # Cancel all other responses
-    DeliveryBroadcastResponse.objects.filter(
-        broadcast=broadcast
-    ).exclude(delivery_partner=request.user).update(
-        status=DeliveryBroadcastResponse.ResponseStatus.CANCELLED,
-        responded_at=timezone.now()
-    )
-    
-    # Update current user's response
-    my_response, _ = DeliveryBroadcastResponse.objects.get_or_create(
-        broadcast=broadcast,
-        delivery_partner=request.user,
-        defaults={'status': DeliveryBroadcastResponse.ResponseStatus.PENDING}
-    )
-    my_response.status = DeliveryBroadcastResponse.ResponseStatus.ACCEPTED
-    my_response.responded_at = timezone.now()
-    my_response.save()
-    
-    # Notify student
-    Notification.objects.create(
-        recipient=broadcast.order.student,
-        order=broadcast.order,
-        message=f'Your order {broadcast.order.order_code} has been picked up by a delivery partner. They will be there soon!'
-    )
-    
-    return JsonResponse({
-        'success': True,
-        'message': 'Delivery accepted successfully',
-        'assignment_id': assignment.id,
-    })
+    try:
+        with transaction.atomic():
+            broadcast = DeliveryBroadcast.objects.select_for_update().select_related(
+                'order', 'order__student'
+            ).get(id=broadcast_id)
+
+            existing_assignment = DeliveryAssignment.objects.filter(order=broadcast.order).first()
+            if existing_assignment:
+                if existing_assignment.delivery_partner_id == request.user.id:
+                    return JsonResponse({
+                        'success': True,
+                        'message': 'Delivery already accepted successfully',
+                        'assignment_id': existing_assignment.id,
+                    })
+                return JsonResponse({'error': 'Already accepted by another partner'}, status=400)
+
+            if broadcast.status != DeliveryBroadcast.BroadcastStatus.ACTIVE:
+                return JsonResponse({'error': 'Broadcast is no longer active'}, status=400)
+
+            if broadcast.expires_at and timezone.now() > broadcast.expires_at:
+                broadcast.status = DeliveryBroadcast.BroadcastStatus.EXPIRED
+                broadcast.save(update_fields=['status'])
+                return JsonResponse({'error': 'Broadcast has expired'}, status=400)
+
+            if broadcast.accepted_by and broadcast.accepted_by_id != request.user.id:
+                return JsonResponse({'error': 'Already accepted by another partner'}, status=400)
+
+            broadcast.status = DeliveryBroadcast.BroadcastStatus.ACCEPTED
+            broadcast.accepted_by = request.user
+            broadcast.accepted_at = timezone.now()
+            broadcast.save(update_fields=['status', 'accepted_by', 'accepted_at'])
+
+            app = StaffApplication.objects.filter(
+                email=request.user.email,
+                role_applied='DELIVERY'
+            ).first()
+
+            assignment = DeliveryAssignment.objects.create(
+                order=broadcast.order,
+                delivery_partner=request.user,
+                status=DeliveryAssignment.AssignmentStatus.ACCEPTED,
+                accepted_at=timezone.now(),
+                partner_name=request.user.get_full_name() or request.user.username,
+                partner_phone=request.user.phone,
+                partner_vehicle=app.vehicle_number if app else '',
+            )
+
+            DeliveryBroadcastResponse.objects.filter(
+                broadcast=broadcast
+            ).exclude(delivery_partner=request.user).update(
+                status=DeliveryBroadcastResponse.ResponseStatus.CANCELLED,
+                responded_at=timezone.now()
+            )
+
+            my_response, _ = DeliveryBroadcastResponse.objects.get_or_create(
+                broadcast=broadcast,
+                delivery_partner=request.user,
+                defaults={'status': DeliveryBroadcastResponse.ResponseStatus.PENDING}
+            )
+            my_response.status = DeliveryBroadcastResponse.ResponseStatus.ACCEPTED
+            my_response.responded_at = timezone.now()
+            my_response.save()
+
+            Notification.objects.create(
+                recipient=broadcast.order.student,
+                order=broadcast.order,
+                message=f'Your order {broadcast.order.order_code} has been accepted by a delivery partner and pickup is on the way.'
+            )
+
+            return JsonResponse({
+                'success': True,
+                'message': 'Delivery accepted successfully',
+                'assignment_id': assignment.id,
+            })
+    except DeliveryBroadcast.DoesNotExist:
+        return JsonResponse({'error': 'Broadcast not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': f'Could not accept delivery: {str(e)}'}, status=500)
 
 
 @login_required
@@ -1399,23 +1411,25 @@ def delivery_reject_broadcast(request, broadcast_id: int):
     if request.user.role != User.Role.DELIVERY:
         return JsonResponse({'error': 'Unauthorized'}, status=403)
     
-    broadcast = get_object_or_404(DeliveryBroadcast, id=broadcast_id)
-    reason = request.POST.get('reason', 'No reason provided')
-    
-    # Update response
-    response, _ = DeliveryBroadcastResponse.objects.get_or_create(
-        broadcast=broadcast,
-        delivery_partner=request.user
-    )
-    response.status = DeliveryBroadcastResponse.ResponseStatus.REJECTED
-    response.responded_at = timezone.now()
-    response.response_reason = reason
-    response.save()
-    
-    return JsonResponse({
-        'success': True,
-        'message': 'Broadcast rejected',
-    })
+    try:
+        broadcast = get_object_or_404(DeliveryBroadcast, id=broadcast_id)
+        reason = request.POST.get('reason', 'No reason provided')
+
+        response, _ = DeliveryBroadcastResponse.objects.get_or_create(
+            broadcast=broadcast,
+            delivery_partner=request.user
+        )
+        response.status = DeliveryBroadcastResponse.ResponseStatus.REJECTED
+        response.responded_at = timezone.now()
+        response.response_reason = reason
+        response.save()
+
+        return JsonResponse({
+            'success': True,
+            'message': 'Broadcast rejected',
+        })
+    except Exception as e:
+        return JsonResponse({'error': f'Could not reject delivery: {str(e)}'}, status=500)
 
 
 @login_required

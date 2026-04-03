@@ -77,6 +77,16 @@
     }
 </style>
 <script>
+async function readJsonResponse(response) {
+    const text = await response.text();
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        const preview = text.replace(/\s+/g, ' ').slice(0, 180);
+        throw new Error(preview || `HTTP ${response.status}`);
+    }
+}
+
 function acceptBroadcast(broadcastId) {
     if (confirm('Accept this delivery?')) {
         const form = new FormData();
@@ -87,7 +97,7 @@ function acceptBroadcast(broadcastId) {
             },
             body: form
         })
-        .then(r => r.json())
+        .then(readJsonResponse)
         .then(data => {
             if (data.success) {
                 alert(data.message + ' Opening navigation...');
@@ -119,7 +129,7 @@ function rejectBroadcast(broadcastId) {
             },
             body: form
         })
-        .then(r => r.json())
+        .then(readJsonResponse)
         .then(data => {
             if (data.success) {
                 alert(data.message);
@@ -148,7 +158,7 @@ function markPickedUp(assignmentId) {
             },
             body: form
         })
-        .then(r => r.json())
+        .then(readJsonResponse)
         .then(data => {
             if (data.success) {
                 alert(data.message);
@@ -168,7 +178,7 @@ function markOutForDelivery(assignmentId) {
             },
             body: form
         })
-        .then(r => r.json())
+        .then(readJsonResponse)
         .then(data => {
             if (data.success) {
                 alert(data.message);
@@ -188,7 +198,7 @@ function markDelivered(assignmentId) {
             },
             body: form
         })
-        .then(r => r.json())
+        .then(readJsonResponse)
         .then(data => {
             if (data.success) {
                 alert(data.message + ' Order completed!');
