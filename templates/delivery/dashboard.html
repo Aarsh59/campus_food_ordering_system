@@ -90,11 +90,18 @@ function acceptBroadcast(broadcastId) {
         .then(r => r.json())
         .then(data => {
             if (data.success) {
-                alert(data.message);
+                alert(data.message + ' Opening navigation...');
+                if (data.assignment_id) {
+                    window.location.href = `/users/delivery/assignment/${data.assignment_id}/navigation/`;
+                    return;
+                }
                 location.reload();
             } else {
                 alert('Error: ' + data.error);
             }
+        })
+        .catch(err => {
+            alert('Error accepting delivery: ' + err);
         });
     }
 }
@@ -117,7 +124,12 @@ function rejectBroadcast(broadcastId) {
             if (data.success) {
                 alert(data.message);
                 location.reload();
+            } else {
+                alert('Error: ' + data.error);
             }
+        })
+        .catch(err => {
+            alert('Error rejecting delivery: ' + err);
         });
     }
 }
