@@ -240,6 +240,12 @@ def vendor_dashboard(request):
         return redirect('login')
 
     vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+    now = timezone.now()
+    DeliveryBroadcast.objects.filter(
+        order__vendor=vendor_profile,
+        status=DeliveryBroadcast.BroadcastStatus.ACTIVE,
+        expires_at__lt=now,
+    ).update(status=DeliveryBroadcast.BroadcastStatus.EXPIRED)
 
     incoming_tickets = (
         Order.objects.filter(
@@ -255,6 +261,11 @@ def vendor_dashboard(request):
         Order.objects.filter(
             vendor=vendor_profile,
             vendor_decision=Order.VendorDecision.ACCEPTED,
+        )
+        .exclude(
+            Q(delivery_status=Order.DeliveryStatus.DELIVERED) |
+            Q(vendor_status=Order.VendorStatus.CANCELLED) |
+            Q(delivery_broadcast__status=DeliveryBroadcast.BroadcastStatus.EXPIRED)
         )
         .select_related('student', 'vendor')
         .prefetch_related('items')

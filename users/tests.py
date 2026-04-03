@@ -848,6 +848,49 @@ class VendorDashboardTest(TestCase):
         response = self.client.get(reverse('vendor_dashboard'))
         self.assertEqual(response.status_code, 302)  # Redirect to login
 
+    def test_vendor_dashboard_hides_delivered_and_expired_orders(self):
+        student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+
+        active_order = Order.objects.create(
+            student=student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('120.00'),
+            vendor_decision=Order.VendorDecision.ACCEPTED,
+            vendor_status=Order.VendorStatus.PREPARING,
+        )
+        delivered_order = Order.objects.create(
+            student=student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('130.00'),
+            vendor_decision=Order.VendorDecision.ACCEPTED,
+            delivery_status=Order.DeliveryStatus.DELIVERED,
+        )
+        expired_order = Order.objects.create(
+            student=student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('140.00'),
+            vendor_decision=Order.VendorDecision.ACCEPTED,
+            vendor_status=Order.VendorStatus.READY,
+        )
+        DeliveryBroadcast.objects.create(
+            order=expired_order,
+            status=DeliveryBroadcast.BroadcastStatus.ACTIVE,
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+
+        response = self.client.get(reverse('vendor_dashboard'))
+        self.assertEqual(response.status_code, 200)
+
+        accepted_orders = list(response.context['accepted_orders'])
+        self.assertIn(active_order, accepted_orders)
+        self.assertNotIn(delivered_order, accepted_orders)
+        self.assertNotIn(expired_order, accepted_orders)
+
 
 class VendorMenuTest(TestCase):
 
