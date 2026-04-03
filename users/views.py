@@ -31,6 +31,7 @@ import urllib.parse
 import urllib.request
 import razorpay
 from datetime import timedelta
+from django.db.models import Q
 
 
 def _generate_google_maps_link_from_address(address: str) -> tuple[str, str]:
@@ -284,9 +285,17 @@ def delivery_dashboard(request):
         messages.error(request, 'Unauthorized access')
         return redirect('login')
     
-    # Get all active broadcasts that this partner hasn't responded to
+    now = timezone.now()
+    DeliveryBroadcast.objects.filter(
+        status=DeliveryBroadcast.BroadcastStatus.ACTIVE,
+        expires_at__lt=now,
+    ).update(status=DeliveryBroadcast.BroadcastStatus.EXPIRED)
+
+    # Get all still-active broadcasts that this partner hasn't responded to
     active_broadcasts = DeliveryBroadcast.objects.filter(
         status=DeliveryBroadcast.BroadcastStatus.ACTIVE
+    ).filter(
+        Q(expires_at__isnull=True) | Q(expires_at__gt=now)
     ).select_related('order', 'order__vendor', 'order__student')
     
     # Get broadcast responses from this partner
@@ -1280,9 +1289,17 @@ def delivery_available_orders(request):
         messages.error(request, 'Unauthorized access')
         return redirect('login')
     
-    # Get all active broadcasts that this partner hasn't responded to
+    now = timezone.now()
+    DeliveryBroadcast.objects.filter(
+        status=DeliveryBroadcast.BroadcastStatus.ACTIVE,
+        expires_at__lt=now,
+    ).update(status=DeliveryBroadcast.BroadcastStatus.EXPIRED)
+
+    # Get all still-active broadcasts that this partner hasn't responded to
     active_broadcasts = DeliveryBroadcast.objects.filter(
         status=DeliveryBroadcast.BroadcastStatus.ACTIVE
+    ).filter(
+        Q(expires_at__isnull=True) | Q(expires_at__gt=now)
     ).select_related('order', 'order__vendor', 'order__student')
     
     # Get broadcast responses from this partner
