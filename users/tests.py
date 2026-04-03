@@ -1213,6 +1213,11 @@ class EndToEndOrderingTest(TestCase):
             'delivery_address': 'IIT Kanpur, Hall 1'
         })
         self.assertEqual(response.status_code, 200)
+        mock_client_instance.order.create.assert_called_once_with({
+            'amount': 20000,
+            'currency': 'INR',
+            'payment_capture': '1',
+        })
         data = response.json()
         self.assertTrue(data['success'])
         order_ids = data['orders']

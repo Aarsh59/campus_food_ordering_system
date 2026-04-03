@@ -795,11 +795,11 @@ def student_create_order(request):
     
     # Create Razorpay order
     try:
-        razorpay_order = razorpay_client.order.create(
-            amount=int(total_amount * 100),  # Razorpay expects amount in paise
-            currency='INR',
-            payment_capture='1'
-        )
+        razorpay_order = razorpay_client.order.create({
+            'amount': int(total_amount * 100),  # Razorpay expects amount in paise
+            'currency': 'INR',
+            'payment_capture': '1',
+        })
     except Exception as e:
         return JsonResponse({'error': f'Failed to create payment order: {str(e)}'}, status=500)
     
