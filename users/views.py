@@ -919,6 +919,71 @@ def student_verify_payment(request):
 
 
 @login_required
+@require_http_methods(["POST"])
+def student_cancel_payment(request):
+    """Mark newly created orders as cancelled when payment is abandoned."""
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    razorpay_order_id = (data.get('razorpay_order_id') or '').strip()
+    raw_order_ids = data.get('order_ids') or []
+    cancellation_reason = (data.get('reason') or 'Payment cancelled').strip()
+
+    if not razorpay_order_id or not isinstance(raw_order_ids, list):
+        return JsonResponse({'error': 'Missing cancellation details'}, status=400)
+
+    orders = list(
+        Order.objects.filter(
+            student=request.user,
+            id__in=raw_order_ids,
+            payment_status=Order.PaymentStatus.PENDING,
+        )
+    )
+
+    if not orders:
+        return JsonResponse({
+            'success': True,
+            'message': 'No pending orders needed cancellation.',
+        })
+
+    payment = Payment.objects.filter(
+        student=request.user,
+        razorpay_order_id=razorpay_order_id,
+    ).first()
+
+    if payment and payment.status == Payment.PaymentStatus.SUCCESS:
+        return JsonResponse({
+            'success': False,
+            'error': 'Payment already completed for this order.',
+        }, status=400)
+
+    for order in orders:
+        order.payment_status = Order.PaymentStatus.FAILED
+        order.vendor_status = Order.VendorStatus.CANCELLED
+        order.save(update_fields=['payment_status', 'vendor_status', 'updated_at'])
+
+        Notification.objects.create(
+            recipient=request.user,
+            order=order,
+            message=f"{cancellation_reason}. Order {order.order_code} was cancelled.",
+        )
+
+    if payment and payment.status == Payment.PaymentStatus.PENDING:
+        payment.status = Payment.PaymentStatus.CANCELLED
+        payment.save(update_fields=['status', 'updated_at'])
+
+    return JsonResponse({
+        'success': True,
+        'message': 'Pending orders cancelled successfully.',
+    })
+
+
+@login_required
 def student_orders(request):
     """Display all orders for the student."""
     if request.user.role != User.Role.STUDENT:

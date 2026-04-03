@@ -1281,3 +1281,44 @@ class EndToEndOrderingTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, order.order_code)
         self.assertContains(response, order.order_code)
+
+    @patch('users.views.razorpay.Client')
+    def test_cancel_payment_marks_pending_orders_cancelled(self, mock_razorpay_client):
+        mock_client_instance = mock_razorpay_client.return_value
+        mock_client_instance.order.create.return_value = {
+            'id': 'order_cancel_123',
+            'amount': 10000,
+            'currency': 'INR'
+        }
+
+        client = Client()
+        client.login(username='student1', password='Test@1234')
+        client.post(reverse('student_add_to_cart', args=[self.menu_item.id]), {
+            'quantity': 1
+        })
+
+        create_response = client.post(reverse('student_create_order'), {
+            'delivery_address': 'IIT Kanpur, Hall 1'
+        })
+        self.assertEqual(create_response.status_code, 200)
+        created_data = create_response.json()
+
+        cancel_response = client.post(
+            reverse('student_cancel_payment'),
+            data={
+                'razorpay_order_id': created_data['razorpay_order_id'],
+                'order_ids': created_data['orders'],
+                'reason': 'Payment cancelled by user',
+            },
+            content_type='application/json'
+        )
+        self.assertEqual(cancel_response.status_code, 200)
+        cancel_data = cancel_response.json()
+        self.assertTrue(cancel_data['success'])
+
+        order = Order.objects.get(id=created_data['orders'][0])
+        payment = Payment.objects.get(razorpay_order_id=created_data['razorpay_order_id'])
+
+        self.assertEqual(order.payment_status, Order.PaymentStatus.FAILED)
+        self.assertEqual(order.vendor_status, Order.VendorStatus.CANCELLED)
+        self.assertEqual(payment.status, Payment.PaymentStatus.CANCELLED)

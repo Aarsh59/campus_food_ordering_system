@@ -285,13 +285,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
                     <!-- Vendor Decision -->
                     <div class="timeline-item">
-                        <div class="timeline-marker {% if order.vendor_decision == 'ACCEPTED' %}completed{% elif order.vendor_decision == 'PENDING' %}pending{% else %}pending{% endif %}">
-                            {% if order.vendor_decision == 'ACCEPTED' %}✓{% else %}2{% endif %}
+                        <div class="timeline-marker {% if order.vendor_decision == 'ACCEPTED' %}completed{% elif order.vendor_decision == 'REJECTED' %}active{% else %}pending{% endif %}">
+                            {% if order.vendor_decision == 'ACCEPTED' %}✓{% elif order.vendor_decision == 'REJECTED' %}!{% else %}2{% endif %}
                         </div>
                         <div class="timeline-content">
                             <div class="timeline-title">Order {{ order.get_vendor_decision_display }}</div>
                             {% if order.vendor_decision == 'ACCEPTED' %}
                                 <div class="timeline-time">{{ order.updated_at|date:"M d, Y H:i" }}</div>
+                            {% elif order.vendor_decision == 'REJECTED' %}
+                                <div class="timeline-time">The vendor rejected this order.</div>
                             {% else %}
                                 <div class="timeline-time">Waiting for vendor response...</div>
                             {% endif %}
@@ -436,8 +438,14 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="card-body">
                 <div class="info-item">
                     <span>Status</span>
-                    <span class="badge {% if order.payment_status == 'COMPLETED' %}bg-success{% elif order.payment_status == 'FAILED' %}bg-danger{% else %}bg-warning{% endif %}">
-                        {{ order.get_payment_status_display }}
+                    <span class="badge {% if order.vendor_decision == 'REJECTED' or order.vendor_status == 'CANCELLED' or order.payment_status == 'FAILED' %}bg-danger{% elif order.payment_status == 'COMPLETED' %}bg-success{% else %}bg-warning{% endif %}">
+                        {% if order.vendor_decision == 'REJECTED' %}
+                            Rejected
+                        {% elif order.vendor_status == 'CANCELLED' %}
+                            Cancelled
+                        {% else %}
+                            {{ order.get_payment_status_display }}
+                        {% endif %}
                     </span>
                 </div>
                 <div class="info-item">

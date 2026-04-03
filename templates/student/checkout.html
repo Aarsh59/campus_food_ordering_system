@@ -103,13 +103,25 @@ function createOrder() {
 }
 
 function initiatePayment(data) {
+    let paymentResolved = false;
+
     const options = {
         key: '{{ razorpay_key }}',
         amount: data.amount,
         currency: 'INR',
         order_id: data.razorpay_order_id,
         handler: function(response) {
+            paymentResolved = true;
             verifyPayment(response);
+        },
+        modal: {
+            ondismiss: function() {
+                if (paymentResolved) {
+                    return;
+                }
+                paymentResolved = true;
+                cancelPendingPayment(data, 'Payment cancelled by user');
+            }
         },
         prefill: {
             name: '{{ request.user.get_full_name|default:request.user.username }}',
@@ -122,6 +134,16 @@ function initiatePayment(data) {
     };
 
     const rzp = new Razorpay(options);
+    rzp.on('payment.failed', function(response) {
+        if (paymentResolved) {
+            return;
+        }
+        paymentResolved = true;
+        const reason = response.error && response.error.description
+            ? response.error.description
+            : 'Payment failed';
+        cancelPendingPayment(data, reason);
+    });
     rzp.open();
 }
 
@@ -154,6 +176,33 @@ function verifyPayment(response) {
     })
     .catch(err => {
         alert('Error verifying payment: ' + err);
+    });
+}
+
+function cancelPendingPayment(data, reason) {
+    fetch('{% url "student_cancel_payment" %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCsrfToken(),
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            razorpay_order_id: data.razorpay_order_id,
+            order_ids: data.orders,
+            reason: reason
+        })
+    })
+    .then(r => r.json())
+    .then(cancelData => {
+        if (!cancelData.success) {
+            alert('Payment was not completed, but the order could not be cancelled automatically: ' + cancelData.error);
+            return;
+        }
+        alert(reason + '. Your pending order has been cancelled.');
+        window.location.href = '{% url "student_view_cart" %}';
+    })
+    .catch(err => {
+        alert('Payment was not completed. We could not update the order status automatically: ' + err);
     });
 }
 </script>

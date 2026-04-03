@@ -19,6 +19,7 @@ urlpatterns = [
     path('student/checkout/', views.student_checkout, name='student_checkout'),
     path('student/order/create/', views.student_create_order, name='student_create_order'),
     path('student/order/verify-payment/', views.student_verify_payment, name='student_verify_payment'),
+    path('student/order/cancel-payment/', views.student_cancel_payment, name='student_cancel_payment'),
     path('student/orders/', views.student_orders, name='student_orders'),
     path('student/order/<int:order_id>/', views.student_order_detail, name='student_order_detail'),
     path('student/order/<int:order_id>/tracking/', views.get_order_tracking_updates, name='get_order_tracking_updates'),
