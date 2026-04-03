@@ -54,6 +54,7 @@ let currentLocationMarker;
 let vendorMarker;
 let customerMarker;
 let locationWatch;
+const deliveryLocationUpdateUrl = "{% url 'delivery_send_location' assignment.id %}";
 const vendorLoc = {{ vendor_location_json|safe }};
 const studentLoc = {{ student_location_json|safe }};
 const activeLeg = '{{ active_leg }}';
@@ -197,7 +198,7 @@ function calculateRoute(currentLoc) {
 }
 
 function sendLocationToServer(location, accuracy) {
-    fetch('/users/delivery/assignment/{{ assignment.id }}/location/', {
+    fetch(deliveryLocationUpdateUrl, {
         method: 'POST',
         headers: {
             'X-CSRFToken': getCsrfToken(),
