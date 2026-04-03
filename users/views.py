@@ -594,6 +594,47 @@ def vendor_reverse_geocode_location(request):
     )
 
 
+@login_required
+@require_http_methods(["POST"])
+def student_reverse_geocode_location(request):
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+
+    lat = None
+    lng = None
+    try:
+        if request.body:
+            body = json.loads(request.body.decode('utf-8'))
+            lat = body.get('lat')
+            lng = body.get('lng')
+    except Exception:
+        pass
+
+    if lat is None or lng is None:
+        lat = request.POST.get('lat')
+        lng = request.POST.get('lng')
+
+    try:
+        lat = float(lat)
+        lng = float(lng)
+    except (TypeError, ValueError):
+        return JsonResponse({'error': 'Invalid lat/lng'}, status=400)
+
+    try:
+        maps_link, formatted_address = _reverse_geocode_lat_lng(lat, lng)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=400)
+
+    return JsonResponse(
+        {
+            'lat': lat,
+            'lng': lng,
+            'address': formatted_address,
+            'maps_link': maps_link,
+        }
+    )
+
+
 # ─── Student Views - Vendor Discovery & Ordering ──────────────────────────────
 
 @login_required
@@ -763,6 +804,7 @@ def student_checkout(request):
         'total_amount': total_amount,
         'delivery_address': delivery_address,
         'razorpay_key': settings.RAZORPAY_KEY_ID,
+        'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
     })
 
 
@@ -1175,17 +1217,20 @@ def vendor_broadcast_delivery(request, order_id: int):
     Vendor marks order as READY and broadcasts to all delivery personnel.
     """
     if request.user.role != User.Role.VENDOR:
-        return JsonResponse({'error': 'Unauthorized'}, status=403)
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
     
     vendor_profile = get_object_or_404(VendorProfile, user=request.user)
     order = get_object_or_404(Order, id=order_id, vendor=vendor_profile)
     
     if order.vendor_status != Order.VendorStatus.READY:
-        return JsonResponse({'error': 'Order must be marked as READY first'}, status=400)
+        messages.error(request, 'Order must be marked as ready first.')
+        return redirect('vendor_dashboard')
     
     # Check if broadcast already exists
     if hasattr(order, 'delivery_broadcast') and order.delivery_broadcast.status == DeliveryBroadcast.BroadcastStatus.ACTIVE:
-        return JsonResponse({'error': 'Delivery already broadcasted'}, status=400)
+        messages.info(request, 'This order has already been broadcast to delivery personnel.')
+        return redirect('vendor_dashboard')
     
     # Get vendor location from profile
     pickup_lat, pickup_lng = None, None
@@ -1221,11 +1266,8 @@ def vendor_broadcast_delivery(request, order_id: int):
             message=f"New delivery request: {order.order_code} from {vendor_profile.outlet_name}. Order ready for pickup."
         )
     
-    return JsonResponse({
-        'success': True,
-        'message': 'Delivery broadcasted to all personnel',
-        'broadcast_id': broadcast.id,
-    })
+    messages.success(request, 'Order broadcasted to delivery personnel successfully.')
+    return redirect('vendor_dashboard')
 
 
 @login_required
@@ -1378,7 +1420,7 @@ def delivery_reject_broadcast(request, broadcast_id: int):
 @login_required
 def delivery_navigation(request, assignment_id: int):
     """
-    Show navigation from delivery partner's current location to vendor.
+    Show navigation for the current delivery leg.
     """
     if request.user.role != User.Role.DELIVERY:
         messages.error(request, 'Unauthorized access')
@@ -1386,6 +1428,39 @@ def delivery_navigation(request, assignment_id: int):
     
     assignment = get_object_or_404(DeliveryAssignment, id=assignment_id, delivery_partner=request.user)
     broadcast = assignment.order.delivery_broadcast
+
+    vendor_location = None
+    if broadcast.pickup_latitude is not None and broadcast.pickup_longitude is not None:
+        vendor_location = {
+            'lat': float(broadcast.pickup_latitude),
+            'lng': float(broadcast.pickup_longitude),
+        }
+    elif assignment.order.vendor.google_maps_location:
+        coords = _parse_google_maps_coordinates(assignment.order.vendor.google_maps_location)
+        if coords:
+            vendor_location = {
+                'lat': coords[0],
+                'lng': coords[1],
+            }
+
+    student_location = None
+    try:
+        maps_link, _ = _generate_google_maps_link_from_address(assignment.order.delivery_address)
+        coords = _parse_google_maps_coordinates(maps_link)
+        if coords:
+            student_location = {
+                'lat': coords[0],
+                'lng': coords[1],
+            }
+    except Exception:
+        student_location = None
+
+    active_leg = 'pickup'
+    if assignment.status in [
+        DeliveryAssignment.AssignmentStatus.PICKED_UP,
+        DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY,
+    ]:
+        active_leg = 'delivery'
     
     return render(request, 'delivery/navigation.html', {
         'assignment': assignment,
@@ -1393,6 +1468,9 @@ def delivery_navigation(request, assignment_id: int):
         'vendor': assignment.order.vendor,
         'broadcast': broadcast,
         'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
+        'vendor_location_json': json.dumps(vendor_location),
+        'student_location_json': json.dumps(student_location),
+        'active_leg': active_leg,
     })
 
 

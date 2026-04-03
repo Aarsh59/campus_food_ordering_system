@@ -303,6 +303,9 @@ function markDelivered(assignmentId) {
                                 📦 Picked Up
                             </button>
                         {% elif assignment.status == 'PICKED_UP' %}
+                            <button class="btn btn-primary btn-sm" onclick="startNavigation({{ assignment.id }})">
+                                📍 Navigation
+                            </button>
                             <button class="btn btn-warning btn-sm" onclick="markOutForDelivery({{ assignment.id }})">
                                 🚗 Out for Delivery
                             </button>

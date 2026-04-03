@@ -1008,11 +1008,11 @@ class DeliveryBroadcastTest(TestCase):
         )
 
     def test_broadcast_delivery(self):
-        response = self.client.post(reverse('vendor_broadcast_delivery', args=[self.order.id]))
+        response = self.client.post(reverse('vendor_broadcast_delivery', args=[self.order.id]), follow=True)
         self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data['success'])
         self.assertTrue(DeliveryBroadcast.objects.filter(order=self.order).exists())
+        messages = list(response.context['messages'])
+        self.assertTrue(any('broadcasted' in str(message).lower() for message in messages))
 
 
 class DeliveryAcceptanceTest(TestCase):
@@ -1113,7 +1113,15 @@ class DeliveryAssignmentTest(TestCase):
         self.order = Order.objects.create(
             student=self.student,
             vendor=self.vendor_profile,
-            total_amount=Decimal('200.00')
+            total_amount=Decimal('200.00'),
+            delivery_address='Hall 1, IIT Kanpur'
+        )
+        self.broadcast = DeliveryBroadcast.objects.create(
+            order=self.order,
+            status=DeliveryBroadcast.BroadcastStatus.ACCEPTED,
+            pickup_latitude=Decimal('26.5124'),
+            pickup_longitude=Decimal('80.2394'),
+            expires_at=timezone.now() + timedelta(minutes=10)
         )
         self.assignment = DeliveryAssignment.objects.create(
             order=self.order,
@@ -1142,6 +1150,24 @@ class DeliveryAssignmentTest(TestCase):
         self.assertEqual(self.assignment.status, DeliveryAssignment.AssignmentStatus.DELIVERED)
         self.order.refresh_from_db()
         self.assertEqual(self.order.delivery_status, Order.DeliveryStatus.DELIVERED)
+
+    @patch('users.views._generate_google_maps_link_from_address')
+    def test_navigation_switches_to_student_after_pickup(self, mock_generate_maps_link):
+        mock_generate_maps_link.return_value = (
+            'https://www.google.com/maps/search/?api=1&query=26.5230,80.2450',
+            'Hall 1, IIT Kanpur'
+        )
+
+        response = self.client.get(reverse('delivery_navigation', args=[self.assignment.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Pickup from Vendor')
+
+        self.assignment.status = DeliveryAssignment.AssignmentStatus.PICKED_UP
+        self.assignment.save()
+
+        response = self.client.get(reverse('delivery_navigation', args=[self.assignment.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Delivery to Student')
 
 
 # ─── Integration Tests ────────────────────────────────────────────────────────
@@ -1238,7 +1264,7 @@ class EndToEndOrderingTest(TestCase):
         # Step 4: Vendor marks order as ready and broadcasts
         order.vendor_status = Order.VendorStatus.READY
         order.save()
-        response = client.post(reverse('vendor_broadcast_delivery', args=[order.id]))
+        response = client.post(reverse('vendor_broadcast_delivery', args=[order.id]), follow=True)
         self.assertEqual(response.status_code, 200)
         broadcast = DeliveryBroadcast.objects.get(order=order)
         self.assertEqual(broadcast.status, DeliveryBroadcast.BroadcastStatus.ACTIVE)

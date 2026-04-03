@@ -54,14 +54,27 @@ let currentLocationMarker;
 let vendorMarker;
 let customerMarker;
 let locationWatch;
+const vendorLoc = {{ vendor_location_json|safe }};
+const studentLoc = {{ student_location_json|safe }};
+const activeLeg = '{{ active_leg }}';
+
+function getActiveDestination() {
+    if (activeLeg === 'delivery' && studentLoc) {
+        return studentLoc;
+    }
+    return vendorLoc;
+}
+
+function getActiveLegLabel() {
+    return activeLeg === 'delivery' ? 'Delivery to Student' : 'Pickup from Vendor';
+}
 
 function initMap() {
-    // Center on vendor location
-    const vendorLoc = { lat: {{ broadcast.pickup_latitude|default:"26.5124" }}, lng: {{ broadcast.pickup_longitude|default:"80.2394" }} };
+    const initialCenter = getActiveDestination() || vendorLoc || { lat: 26.5070, lng: 80.4360 };
     
     map = new google.maps.Map(document.getElementById('map'), {
         zoom: 15,
-        center: vendorLoc,
+        center: initialCenter,
         mapTypeId: 'roadmap'
     });
 
@@ -72,22 +85,31 @@ function initMap() {
     });
 
     // Vendor marker
-    vendorMarker = new google.maps.Marker({
-        position: vendorLoc,
-        map: map,
-        title: '{{ order.vendor.outlet_name }}',
-        icon: 'http://maps.google.com/mapfiles/ms/icons/orange-dot.png'
-    });
+    if (vendorLoc) {
+        vendorMarker = new google.maps.Marker({
+            position: vendorLoc,
+            map: map,
+            title: '{{ order.vendor.outlet_name }}',
+            icon: 'http://maps.google.com/mapfiles/ms/icons/orange-dot.png'
+        });
+    }
 
-    // Customer marker
-    if ({{ broadcast.pickup_latitude|default:"false" }}) {
+    if (studentLoc) {
         customerMarker = new google.maps.Marker({
-            position: { lat: 26.5230, lng: 80.2450 }, // Default to approximate customer location
+            position: studentLoc,
             map: map,
             title: '{{ order.student.username }}',
             icon: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png'
         });
     }
+
+    document.getElementById('route-stage').textContent = getActiveLegLabel();
+    document.getElementById('route-destination').textContent =
+        activeLeg === 'delivery' ? '{{ order.student.username|escapejs }}' : '{{ order.vendor.outlet_name|escapejs }}';
+    document.getElementById('route-address').textContent =
+        activeLeg === 'delivery'
+            ? '{{ order.delivery_address|default:"Delivery address unavailable"|escapejs }}'
+            : '{{ order.vendor.google_maps_address|default:order.vendor.outlet_name|escapejs }}';
 
     // Start tracking current location
     startLocationTracking();
@@ -148,14 +170,16 @@ function updateCurrentLocation(location) {
 }
 
 function calculateRoute(currentLoc) {
-    const vendorLoc = {
-        lat: {{ broadcast.pickup_latitude|default:"26.5124" }},
-        lng: {{ broadcast.pickup_longitude|default:"80.2394" }}
-    };
+    const destination = getActiveDestination();
+    if (!destination) {
+        document.getElementById('distance').textContent = 'Unavailable';
+        document.getElementById('duration').textContent = 'Unavailable';
+        return;
+    }
     
     const request = {
         origin: currentLoc,
-        destination: vendorLoc,
+        destination: destination,
         travelMode: google.maps.TravelMode.DRIVING
     };
 
@@ -210,7 +234,7 @@ window.addEventListener('beforeunload', function() {
 {% block content %}
 <div class="mb-4">
     <h1 class="mb-1">🚗 Navigation</h1>
-    <p class="text-muted">Route to {{ order.vendor.outlet_name }}</p>
+    <p class="text-muted">Live route guidance for pickup and delivery</p>
 </div>
 
 <!-- Status Badge -->
@@ -225,6 +249,14 @@ window.addEventListener('beforeunload', function() {
         <div class="navigation-info">
             <h5 class="mb-3">📍 Route Information</h5>
             <div class="info-item">
+                <span>Current Leg:</span>
+                <strong id="route-stage">Calculating...</strong>
+            </div>
+            <div class="info-item">
+                <span>Destination:</span>
+                <strong id="route-destination">Calculating...</strong>
+            </div>
+            <div class="info-item">
                 <span>Distance:</span>
                 <strong id="distance">Calculating...</strong>
             </div>
@@ -235,6 +267,9 @@ window.addEventListener('beforeunload', function() {
             <div class="info-item">
                 <span>Your Location:</span>
                 <strong><span id="current-lat">--</span>, <span id="current-lng">--</span></strong>
+            </div>
+            <div class="mt-3">
+                <small id="route-address" style="display:block; opacity:0.9;">Preparing route details...</small>
             </div>
         </div>
 

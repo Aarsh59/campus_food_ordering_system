@@ -70,6 +70,18 @@
         font-size: 2rem;
         margin-bottom: 10px;
     }
+    .delivery-map {
+        height: 300px;
+        width: 100%;
+        border-radius: 12px;
+        overflow: hidden;
+        background: linear-gradient(135deg, #eef6ff 0%, #f7efe4 100%);
+        border: 1px solid #dce6f2;
+    }
+    .delivery-map-hint {
+        font-size: 0.92rem;
+        color: #6c757d;
+    }
 </style>
 <script>
 function createOrder() {
@@ -205,6 +217,129 @@ function cancelPendingPayment(data, reason) {
         alert('Payment was not completed. We could not update the order status automatically: ' + err);
     });
 }
+
+{% if google_maps_api_key %}
+function initStudentDeliveryMap() {
+    const mapEl = document.getElementById('studentDeliveryMap');
+    const addressField = document.getElementById('delivery-address');
+    const searchField = document.getElementById('delivery-address-search');
+    const useLocationButton = document.getElementById('use-current-location');
+
+    if (!mapEl || !addressField || !window.google) {
+        return;
+    }
+
+    const defaultCenter = { lat: 26.5070, lng: 80.4360 };
+    const map = new google.maps.Map(mapEl, {
+        center: defaultCenter,
+        zoom: 15,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+    });
+
+    const marker = new google.maps.Marker({
+        map: map,
+        position: defaultCenter,
+        draggable: true,
+        animation: google.maps.Animation.DROP,
+    });
+
+    function fillAddress(address, lat, lng) {
+        addressField.value = address || '';
+        const preview = document.getElementById('delivery-map-preview');
+        if (preview) {
+            preview.href = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+            preview.classList.remove('d-none');
+        }
+    }
+
+    async function reverseGeocodeAndFill(lat, lng) {
+        const res = await fetch('{% url "student_reverse_geocode_location" %}', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({ lat: lat, lng: lng })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.error || 'Could not determine this location.');
+            return;
+        }
+
+        fillAddress(data.address || '', lat, lng);
+    }
+
+    function setSelection(lat, lng) {
+        const point = { lat: lat, lng: lng };
+        marker.setPosition(point);
+        map.setCenter(point);
+        map.setZoom(17);
+    }
+
+    map.addListener('click', (e) => {
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        setSelection(lat, lng);
+        reverseGeocodeAndFill(lat, lng);
+    });
+
+    marker.addListener('dragend', (e) => {
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        setSelection(lat, lng);
+        reverseGeocodeAndFill(lat, lng);
+    });
+
+    if (searchField) {
+        const autocomplete = new google.maps.places.Autocomplete(searchField, {
+            fields: ['formatted_address', 'geometry', 'name']
+        });
+
+        autocomplete.addListener('place_changed', () => {
+            const place = autocomplete.getPlace();
+            if (!place || !place.geometry || !place.geometry.location) {
+                return;
+            }
+
+            const lat = place.geometry.location.lat();
+            const lng = place.geometry.location.lng();
+            setSelection(lat, lng);
+            fillAddress(place.formatted_address || place.name || '', lat, lng);
+        });
+    }
+
+    if (useLocationButton && navigator.geolocation) {
+        useLocationButton.addEventListener('click', () => {
+            useLocationButton.disabled = true;
+            useLocationButton.textContent = 'Locating...';
+
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    setSelection(lat, lng);
+                    await reverseGeocodeAndFill(lat, lng);
+                    useLocationButton.disabled = false;
+                    useLocationButton.textContent = 'Use Current Location';
+                },
+                () => {
+                    alert('We could not access your current location.');
+                    useLocationButton.disabled = false;
+                    useLocationButton.textContent = 'Use Current Location';
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        });
+    } else if (useLocationButton) {
+        useLocationButton.classList.add('d-none');
+    }
+}
+{% endif %}
 </script>
 {% endblock %}
 
@@ -218,8 +353,23 @@ function cancelPendingPayment(data, reason) {
             <h5 class="mb-0">📍 Delivery Address</h5>
         </div>
         <div class="card-body">
-            <textarea id="delivery-address" class="form-control" placeholder="Enter your hostel/residence address" rows="3"></textarea>
-            <small class="text-muted">This address will be used for the delivery</small>
+            {% if google_maps_api_key %}
+                <div class="mb-3">
+                    <label for="delivery-address-search" class="form-label">Search Address</label>
+                    <input id="delivery-address-search" class="form-control" type="text" placeholder="Search hostel, hall, gate, or any campus landmark">
+                    <div class="delivery-map-hint mt-2">Pick a place from autocomplete, click on the map, or use your current location for a cleaner delivery address.</div>
+                </div>
+                <div class="mb-3">
+                    <div id="studentDeliveryMap" class="delivery-map"></div>
+                </div>
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="use-current-location">Use Current Location</button>
+                    <a id="delivery-map-preview" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm d-none">Open In Google Maps</a>
+                </div>
+            {% endif %}
+            <label for="delivery-address" class="form-label">Delivery Address</label>
+            <textarea id="delivery-address" class="form-control" placeholder="Enter your hostel/residence address" rows="3">{{ delivery_address }}</textarea>
+            <small class="text-muted">This confirmed address will be used for the delivery</small>
         </div>
     </div>
 
@@ -308,5 +458,11 @@ function cancelPendingPayment(data, reason) {
         </a>
     </div>
 </div>
+
+{% if google_maps_api_key %}
+<script async defer
+  src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=places&callback=initStudentDeliveryMap">
+</script>
+{% endif %}
 
 {% endblock %}

@@ -17,6 +17,7 @@ urlpatterns = [
     path('student/cart/remove/<int:item_id>/', views.student_remove_from_cart, name='student_remove_from_cart'),
     path('student/cart/update/<int:item_id>/', views.student_update_cart_item, name='student_update_cart_item'),
     path('student/checkout/', views.student_checkout, name='student_checkout'),
+    path('student/checkout/reverse-geocode/', views.student_reverse_geocode_location, name='student_reverse_geocode_location'),
     path('student/order/create/', views.student_create_order, name='student_create_order'),
     path('student/order/verify-payment/', views.student_verify_payment, name='student_verify_payment'),
     path('student/order/cancel-payment/', views.student_cancel_payment, name='student_cancel_payment'),
