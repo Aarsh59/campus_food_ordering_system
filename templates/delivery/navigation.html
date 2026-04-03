@@ -54,6 +54,7 @@ let currentLocationMarker;
 let vendorMarker;
 let customerMarker;
 let locationWatch;
+let routeThrottleTimer;
 const deliveryLocationUpdateUrl = "{% url 'delivery_send_location' assignment.id %}";
 const vendorLoc = {{ vendor_location_json|safe }};
 const studentLoc = {{ student_location_json|safe }};
@@ -127,6 +128,7 @@ function startLocationTracking() {
             
             updateCurrentLocation(currentLoc);
             calculateRoute(currentLoc);
+            sendLocationToServer(currentLoc, position.coords.accuracy);
         });
 
         // Watch for location changes
@@ -137,9 +139,12 @@ function startLocationTracking() {
                     lng: position.coords.longitude
                 };
                 updateCurrentLocation(currentLoc);
+                scheduleRouteUpdate(currentLoc);
                 sendLocationToServer(currentLoc, position.coords.accuracy);
             },
             function(error) {
+                document.getElementById('distance').textContent = 'Location unavailable';
+                document.getElementById('duration').textContent = 'Location unavailable';
                 console.log('Location error: ' + error.message);
             },
             {
@@ -151,6 +156,15 @@ function startLocationTracking() {
     } else {
         alert('Geolocation is not supported by this browser.');
     }
+}
+
+function scheduleRouteUpdate(currentLoc) {
+    if (routeThrottleTimer) {
+        window.clearTimeout(routeThrottleTimer);
+    }
+    routeThrottleTimer = window.setTimeout(function() {
+        calculateRoute(currentLoc);
+    }, 400);
 }
 
 function updateCurrentLocation(location) {
@@ -193,6 +207,9 @@ function calculateRoute(currentLoc) {
             
             document.getElementById('distance').textContent = leg.distance.text;
             document.getElementById('duration').textContent = leg.duration.text;
+        } else {
+            document.getElementById('distance').textContent = 'Route unavailable';
+            document.getElementById('duration').textContent = 'Route unavailable';
         }
     });
 }

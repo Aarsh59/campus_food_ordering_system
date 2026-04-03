@@ -1030,6 +1030,39 @@ class DeliveryDashboardTest(TestCase):
         response = self.client.get(reverse('delivery_dashboard'))
         self.assertEqual(response.status_code, 302)  # Redirect to login
 
+    def test_delivery_dashboard_hides_available_orders_when_driver_has_active_delivery(self):
+        vendor = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        vendor_profile = VendorProfile.objects.create(user=vendor, outlet_name='Test Outlet')
+        student = User.objects.create_user(
+            username='student1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        active_order = Order.objects.create(student=student, vendor=vendor_profile, total_amount=Decimal('100.00'))
+        DeliveryAssignment.objects.create(
+            order=active_order,
+            delivery_partner=self.delivery,
+            status=DeliveryAssignment.AssignmentStatus.ACCEPTED
+        )
+
+        another_order = Order.objects.create(student=student, vendor=vendor_profile, total_amount=Decimal('120.00'))
+        DeliveryBroadcast.objects.create(
+            order=another_order,
+            status=DeliveryBroadcast.BroadcastStatus.ACTIVE,
+            expires_at=timezone.now() + timedelta(minutes=10)
+        )
+
+        response = self.client.get(reverse('delivery_dashboard'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['has_active_delivery'])
+        self.assertEqual(list(response.context['broadcasts']), [])
+
 
 class DeliveryBroadcastTest(TestCase):
 
@@ -1148,6 +1181,33 @@ class DeliveryAcceptanceTest(TestCase):
             delivery_partner=self.delivery
         )
         self.assertEqual(response_obj.status, DeliveryBroadcastResponse.ResponseStatus.ACCEPTED)
+
+    def test_accept_broadcast_blocked_when_driver_has_active_delivery(self):
+        other_vendor = User.objects.create_user(
+            username='vendor2',
+            password='Test@1234',
+            phone='8888888888',
+            role=User.Role.VENDOR
+        )
+        other_vendor_profile = VendorProfile.objects.create(
+            user=other_vendor,
+            outlet_name='Other Outlet'
+        )
+        current_order = Order.objects.create(
+            student=self.student,
+            vendor=other_vendor_profile,
+            total_amount=Decimal('150.00')
+        )
+        DeliveryAssignment.objects.create(
+            order=current_order,
+            delivery_partner=self.delivery,
+            status=DeliveryAssignment.AssignmentStatus.PICKED_UP
+        )
+
+        response = self.client.post(reverse('delivery_accept_broadcast', args=[self.broadcast.id]))
+        self.assertEqual(response.status_code, 400)
+        data = response.json()
+        self.assertIn('Complete your current delivery', data['error'])
 
     def test_reject_broadcast(self):
         response = self.client.post(reverse('delivery_reject_broadcast', args=[self.broadcast.id]), {

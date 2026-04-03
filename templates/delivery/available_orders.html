@@ -241,6 +241,11 @@ function markDelivered(assignmentId) {
 <div class="tab-content">
     <!-- Available Broadcasts -->
     <div id="available" class="tab-pane fade show active">
+        {% if has_active_delivery %}
+            <div class="alert alert-info">
+                Finish your current delivery before accepting a new order.
+            </div>
+        {% endif %}
         {% if broadcasts %}
             {% for broadcast in broadcasts %}
                 <div class="card broadcast-card mb-3">

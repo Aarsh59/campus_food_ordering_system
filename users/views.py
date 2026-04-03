@@ -302,25 +302,6 @@ def delivery_dashboard(request):
         expires_at__lt=now,
     ).update(status=DeliveryBroadcast.BroadcastStatus.EXPIRED)
 
-    # Get all still-active broadcasts that this partner hasn't responded to
-    active_broadcasts = DeliveryBroadcast.objects.filter(
-        status=DeliveryBroadcast.BroadcastStatus.ACTIVE
-    ).filter(
-        Q(expires_at__isnull=True) | Q(expires_at__gt=now)
-    ).select_related('order', 'order__vendor', 'order__student')
-    
-    # Get broadcast responses from this partner
-    my_responses = DeliveryBroadcastResponse.objects.filter(
-        delivery_partner=request.user
-    ).values('broadcast_id', 'status')
-    response_dict = {r['broadcast_id']: r['status'] for r in my_responses}
-    
-    # Filter out ones partner has already responded to
-    available = []
-    for broadcast in active_broadcasts:
-        if broadcast.id not in response_dict or response_dict[broadcast.id] == DeliveryBroadcastResponse.ResponseStatus.PENDING:
-            available.append(broadcast)
-    
     # Get accepted deliveries
     my_accepted = DeliveryAssignment.objects.filter(
         delivery_partner=request.user,
@@ -330,10 +311,30 @@ def delivery_dashboard(request):
             DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY,
         ]
     ).select_related('order', 'order__vendor', 'order__student')
+
+    has_active_delivery = my_accepted.exists()
+
+    available = []
+    if not has_active_delivery:
+        active_broadcasts = DeliveryBroadcast.objects.filter(
+            status=DeliveryBroadcast.BroadcastStatus.ACTIVE
+        ).filter(
+            Q(expires_at__isnull=True) | Q(expires_at__gt=now)
+        ).select_related('order', 'order__vendor', 'order__student')
+
+        my_responses = DeliveryBroadcastResponse.objects.filter(
+            delivery_partner=request.user
+        ).values('broadcast_id', 'status')
+        response_dict = {r['broadcast_id']: r['status'] for r in my_responses}
+
+        for broadcast in active_broadcasts:
+            if broadcast.id not in response_dict or response_dict[broadcast.id] == DeliveryBroadcastResponse.ResponseStatus.PENDING:
+                available.append(broadcast)
     
     return render(request, 'delivery/dashboard.html', {
         'broadcasts': available,
         'my_deliveries': my_accepted,
+        'has_active_delivery': has_active_delivery,
     })
 
 
@@ -1085,6 +1086,16 @@ def student_order_detail(request, order_id: int):
     items = order.items.all()
     delivery_assignment = order.delivery_assignment if hasattr(order, 'delivery_assignment') else None
     tracking_updates = list(order.tracking_updates.all()[:100])
+
+    student_location = None
+    if order.delivery_address:
+        try:
+            maps_link, _ = _generate_google_maps_link_from_address(order.delivery_address)
+            coords = _parse_google_maps_coordinates(maps_link)
+            if coords:
+                student_location = {'lat': coords[0], 'lng': coords[1]}
+        except Exception:
+            student_location = None
     
     return render(request, 'student/order_detail.html', {
         'order': order,
@@ -1092,6 +1103,7 @@ def student_order_detail(request, order_id: int):
         'delivery_assignment': delivery_assignment,
         'tracking_updates': tracking_updates,
         'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
+        'student_location_json': json.dumps(student_location),
     })
 
 
@@ -1326,25 +1338,6 @@ def delivery_available_orders(request):
         expires_at__lt=now,
     ).update(status=DeliveryBroadcast.BroadcastStatus.EXPIRED)
 
-    # Get all still-active broadcasts that this partner hasn't responded to
-    active_broadcasts = DeliveryBroadcast.objects.filter(
-        status=DeliveryBroadcast.BroadcastStatus.ACTIVE
-    ).filter(
-        Q(expires_at__isnull=True) | Q(expires_at__gt=now)
-    ).select_related('order', 'order__vendor', 'order__student')
-    
-    # Get broadcast responses from this partner
-    my_responses = DeliveryBroadcastResponse.objects.filter(
-        delivery_partner=request.user
-    ).values('broadcast_id', 'status')
-    response_dict = {r['broadcast_id']: r['status'] for r in my_responses}
-    
-    # Filter out ones partner has already responded to
-    available = []
-    for broadcast in active_broadcasts:
-        if broadcast.id not in response_dict or response_dict[broadcast.id] == DeliveryBroadcastResponse.ResponseStatus.PENDING:
-            available.append(broadcast)
-    
     # Get accepted deliveries
     my_accepted = DeliveryAssignment.objects.filter(
         delivery_partner=request.user,
@@ -1354,10 +1347,30 @@ def delivery_available_orders(request):
             DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY,
         ]
     ).select_related('order', 'order__vendor', 'order__student')
+
+    has_active_delivery = my_accepted.exists()
+
+    available = []
+    if not has_active_delivery:
+        active_broadcasts = DeliveryBroadcast.objects.filter(
+            status=DeliveryBroadcast.BroadcastStatus.ACTIVE
+        ).filter(
+            Q(expires_at__isnull=True) | Q(expires_at__gt=now)
+        ).select_related('order', 'order__vendor', 'order__student')
+
+        my_responses = DeliveryBroadcastResponse.objects.filter(
+            delivery_partner=request.user
+        ).values('broadcast_id', 'status')
+        response_dict = {r['broadcast_id']: r['status'] for r in my_responses}
+
+        for broadcast in active_broadcasts:
+            if broadcast.id not in response_dict or response_dict[broadcast.id] == DeliveryBroadcastResponse.ResponseStatus.PENDING:
+                available.append(broadcast)
     
     return render(request, 'delivery/available_orders.html', {
         'broadcasts': available,
         'my_deliveries': my_accepted,
+        'has_active_delivery': has_active_delivery,
     })
 
 
@@ -1385,6 +1398,19 @@ def delivery_accept_broadcast(request, broadcast_id: int):
                         'assignment_id': existing_assignment.id,
                     })
                 return JsonResponse({'error': 'Already accepted by another partner'}, status=400)
+
+            current_assignment = DeliveryAssignment.objects.filter(
+                delivery_partner=request.user,
+                status__in=[
+                    DeliveryAssignment.AssignmentStatus.ACCEPTED,
+                    DeliveryAssignment.AssignmentStatus.PICKED_UP,
+                    DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY,
+                ]
+            ).first()
+            if current_assignment:
+                return JsonResponse({
+                    'error': f'Complete your current delivery {current_assignment.order.order_code} before accepting another order.'
+                }, status=400)
 
             if broadcast.status != DeliveryBroadcast.BroadcastStatus.ACTIVE:
                 return JsonResponse({'error': 'Broadcast is no longer active'}, status=400)

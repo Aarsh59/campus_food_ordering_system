@@ -120,12 +120,34 @@
     .partner-detail span {
         color: #666;
     }
+    .tracking-stats {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        padding: 14px 18px;
+        background: #f8f9fa;
+        border-top: 1px solid #e9ecef;
+    }
+    .tracking-chip {
+        min-width: 160px;
+    }
+    .tracking-chip-label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #6c757d;
+    }
+    .tracking-chip-value {
+        font-weight: 700;
+        color: #212529;
+    }
 </style>
 <script>
 let map;
 let markers = {};
 let polyline;
-let trackingUpdates = [];
+let trackingRefreshTimer;
+const studentLocation = {{ student_location_json|default:"null"|safe }};
 
 function initMap() {
     const defaultLocation = { lat: 26.5124, lng: 80.2394 }; // IIT Kanpur
@@ -149,9 +171,9 @@ function initMap() {
         }
     {% endif %}
 
-    // Add student location (default to campus)
+    const studentMarkerLocation = studentLocation || defaultLocation;
     markers.student = new google.maps.Marker({
-        position: defaultLocation,
+        position: studentMarkerLocation,
         map: map,
         title: 'Your Location',
         icon: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png'
@@ -160,8 +182,8 @@ function initMap() {
     // Load tracking updates
     loadTrackingUpdates();
     
-    // Refresh tracking every 5 seconds
-    setInterval(loadTrackingUpdates, 5000);
+    // Refresh tracking every 3 seconds
+    trackingRefreshTimer = setInterval(loadTrackingUpdates, 3000);
 }
 
 function parseGoogleMapsUrl(url) {
@@ -173,7 +195,11 @@ function parseGoogleMapsUrl(url) {
 }
 
 function loadTrackingUpdates() {
-    fetch('{% url "get_order_tracking_updates" order.id %}')
+    fetch('{% url "get_order_tracking_updates" order.id %}', {
+        headers: {
+            'Cache-Control': 'no-cache'
+        }
+    })
     .then(r => r.json())
     .then(data => {
         if (data.tracking_updates && data.tracking_updates.length > 0) {
@@ -194,11 +220,45 @@ function loadTrackingUpdates() {
                         icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
                     });
                 }
-                
-                // Center map on delivery partner
-                map.setCenter(partnerLocation);
+
+                if (polyline) {
+                    polyline.setMap(null);
+                }
+                polyline = new google.maps.Polyline({
+                    path: updates
+                        .slice()
+                        .reverse()
+                        .map(update => ({ lat: update.latitude, lng: update.longitude })),
+                    geodesic: true,
+                    strokeColor: '#ff6b00',
+                    strokeOpacity: 0.8,
+                    strokeWeight: 4
+                });
+                polyline.setMap(map);
+
+                const bounds = new google.maps.LatLngBounds();
+                bounds.extend(partnerLocation);
+                if (markers.vendor) {
+                    bounds.extend(markers.vendor.getPosition());
+                }
+                if (markers.student) {
+                    bounds.extend(markers.student.getPosition());
+                }
+                map.fitBounds(bounds, 60);
+
+                const lastUpdated = new Date(latest.timestamp);
+                document.getElementById('tracking-last-updated').textContent = lastUpdated.toLocaleTimeString();
+                document.getElementById('tracking-accuracy').textContent = latest.accuracy
+                    ? `${Math.round(latest.accuracy)} m`
+                    : 'Unknown';
             }
+        } else {
+            document.getElementById('tracking-last-updated').textContent = 'Waiting for driver';
+            document.getElementById('tracking-accuracy').textContent = 'Unknown';
         }
+    })
+    .catch(() => {
+        document.getElementById('tracking-last-updated').textContent = 'Refresh failed';
     });
 }
 
@@ -261,6 +321,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
                 <div class="card-body p-0">
                     <div id="delivery-map"></div>
+                </div>
+                <div class="tracking-stats">
+                    <div class="tracking-chip">
+                        <div class="tracking-chip-label">Driver Status</div>
+                        <div class="tracking-chip-value">Live tracking active</div>
+                    </div>
+                    <div class="tracking-chip">
+                        <div class="tracking-chip-label">Last Updated</div>
+                        <div class="tracking-chip-value" id="tracking-last-updated">Waiting for driver</div>
+                    </div>
+                    <div class="tracking-chip">
+                        <div class="tracking-chip-label">GPS Accuracy</div>
+                        <div class="tracking-chip-value" id="tracking-accuracy">Unknown</div>
+                    </div>
                 </div>
             </div>
         {% endif %}
