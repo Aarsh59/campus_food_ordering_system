@@ -1068,6 +1068,23 @@ class DeliveryAcceptanceTest(TestCase):
         self.assertEqual(self.broadcast.status, DeliveryBroadcast.BroadcastStatus.ACCEPTED)
         self.assertTrue(DeliveryAssignment.objects.filter(order=self.order).exists())
 
+    def test_accept_broadcast_without_existing_response_row(self):
+        DeliveryBroadcastResponse.objects.filter(
+            broadcast=self.broadcast,
+            delivery_partner=self.delivery
+        ).delete()
+
+        response = self.client.post(reverse('delivery_accept_broadcast', args=[self.broadcast.id]))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+
+        response_obj = DeliveryBroadcastResponse.objects.get(
+            broadcast=self.broadcast,
+            delivery_partner=self.delivery
+        )
+        self.assertEqual(response_obj.status, DeliveryBroadcastResponse.ResponseStatus.ACCEPTED)
+
     def test_reject_broadcast(self):
         response = self.client.post(reverse('delivery_reject_broadcast', args=[self.broadcast.id]), {
             'reason': 'Too far'

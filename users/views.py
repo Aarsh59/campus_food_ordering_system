@@ -1367,9 +1367,10 @@ def delivery_accept_broadcast(request, broadcast_id: int):
     )
     
     # Update current user's response
-    my_response = DeliveryBroadcastResponse.objects.get(
+    my_response, _ = DeliveryBroadcastResponse.objects.get_or_create(
         broadcast=broadcast,
-        delivery_partner=request.user
+        delivery_partner=request.user,
+        defaults={'status': DeliveryBroadcastResponse.ResponseStatus.PENDING}
     )
     my_response.status = DeliveryBroadcastResponse.ResponseStatus.ACCEPTED
     my_response.responded_at = timezone.now()
