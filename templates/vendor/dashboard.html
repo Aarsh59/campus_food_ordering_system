@@ -23,15 +23,15 @@
       </div>
       <div class="mb-2">
         <label class="form-label">Outlet Name</label>
-        <input class="form-control" type="text" name="outlet_name" value="{{ vendor_profile.outlet_name|default:'' }}">
+        <input class="form-control" type="text" name="outlet_name" value="{{ vendor_profile.outlet_name|default:'' }}" required>
       </div>
       <div class="mb-2">
         <label class="form-label">Google Maps Address</label>
-        <input class="form-control" type="text" name="google_maps_address" id="googleMapsAddress" placeholder="Selected address will appear here" value="{{ vendor_profile.google_maps_address|default:'' }}">
+        <input class="form-control" type="text" name="google_maps_address" id="googleMapsAddress" placeholder="Selected address will appear here" value="{{ vendor_profile.google_maps_address|default:'' }}" required>
       </div>
       <div class="mb-2">
         <label class="form-label">Google Maps Link</label>
-        <input class="form-control" type="text" name="google_maps_location" id="googleMapsLink" placeholder="Generated Google Maps link will appear here" value="{{ vendor_profile.google_maps_location|default:'' }}">
+        <input class="form-control" type="text" name="google_maps_location" id="googleMapsLink" placeholder="Generated Google Maps link will appear here" value="{{ vendor_profile.google_maps_location|default:'' }}" required>
       </div>
       <input type="hidden" name="lat" id="selectedLat" value="">
       <input type="hidden" name="lng" id="selectedLng" value="">

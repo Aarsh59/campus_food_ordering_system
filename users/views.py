@@ -347,13 +347,25 @@ def vendor_update_location(request):
         return redirect('vendor_dashboard')
 
     vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
-    vendor_profile.outlet_name = request.POST.get('outlet_name', vendor_profile.outlet_name).strip()
-    vendor_profile.google_maps_location = request.POST.get(
+    outlet_name = request.POST.get('outlet_name', vendor_profile.outlet_name).strip()
+    google_maps_location = request.POST.get(
         'google_maps_location', vendor_profile.google_maps_location
     ).strip()
-    vendor_profile.google_maps_address = request.POST.get(
+    google_maps_address = request.POST.get(
         'google_maps_address', vendor_profile.google_maps_address
     ).strip()
+
+    if not outlet_name:
+        messages.error(request, 'Outlet name is required.')
+        return redirect('vendor_dashboard')
+
+    if not google_maps_address or not google_maps_location:
+        messages.error(request, 'Please select and save your outlet address on the map before continuing.')
+        return redirect('vendor_dashboard')
+
+    vendor_profile.outlet_name = outlet_name
+    vendor_profile.google_maps_location = google_maps_location
+    vendor_profile.google_maps_address = google_maps_address
     vendor_profile.save()
 
     messages.success(request, 'Location saved successfully.')
@@ -1252,6 +1264,10 @@ def vendor_broadcast_delivery(request, order_id: int):
     if hasattr(order, 'delivery_broadcast') and order.delivery_broadcast.status == DeliveryBroadcast.BroadcastStatus.ACTIVE:
         messages.info(request, 'This order has already been broadcast to delivery personnel.')
         return redirect('vendor_dashboard')
+
+    if not vendor_profile.google_maps_address or not vendor_profile.google_maps_location:
+        messages.error(request, 'Add and save your outlet address on the map before broadcasting to delivery personnel.')
+        return redirect('vendor_dashboard')
     
     # Get vendor location from profile
     pickup_lat, pickup_lng = None, None
@@ -1259,6 +1275,10 @@ def vendor_broadcast_delivery(request, order_id: int):
         coords = _parse_google_maps_coordinates(vendor_profile.google_maps_location)
         if coords:
             pickup_lat, pickup_lng = coords
+
+    if pickup_lat is None or pickup_lng is None:
+        messages.error(request, 'Your saved outlet map location is invalid. Please reselect it on the map and save again.')
+        return redirect('vendor_dashboard')
     
     # Create broadcast
     expires_at = timezone.now() + timedelta(minutes=10)

@@ -891,6 +891,16 @@ class VendorDashboardTest(TestCase):
         self.assertNotIn(delivered_order, accepted_orders)
         self.assertNotIn(expired_order, accepted_orders)
 
+    def test_vendor_update_location_requires_address_and_map_link(self):
+        response = self.client.post(reverse('vendor_update_location'), {
+            'outlet_name': 'Test Outlet',
+            'google_maps_address': '',
+            'google_maps_location': '',
+        }, follow=True)
+        self.assertEqual(response.status_code, 200)
+        messages = list(response.context['messages'])
+        self.assertTrue(any('select and save your outlet address' in str(message).lower() for message in messages))
+
 
 class VendorMenuTest(TestCase):
 
@@ -1051,11 +1061,22 @@ class DeliveryBroadcastTest(TestCase):
         )
 
     def test_broadcast_delivery(self):
+        self.vendor_profile.google_maps_location = 'https://www.google.com/maps/search/?api=1&query=26.5124,80.2394'
+        self.vendor_profile.google_maps_address = 'IIT Kanpur, Test Outlet'
+        self.vendor_profile.save()
+
         response = self.client.post(reverse('vendor_broadcast_delivery', args=[self.order.id]), follow=True)
         self.assertEqual(response.status_code, 200)
         self.assertTrue(DeliveryBroadcast.objects.filter(order=self.order).exists())
         messages = list(response.context['messages'])
         self.assertTrue(any('broadcasted' in str(message).lower() for message in messages))
+
+    def test_broadcast_delivery_requires_vendor_location(self):
+        response = self.client.post(reverse('vendor_broadcast_delivery', args=[self.order.id]), follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(DeliveryBroadcast.objects.filter(order=self.order).exists())
+        messages = list(response.context['messages'])
+        self.assertTrue(any('outlet address' in str(message).lower() for message in messages))
 
 
 class DeliveryAcceptanceTest(TestCase):
