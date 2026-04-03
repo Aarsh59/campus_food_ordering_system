@@ -1,6 +1,6 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.core.mail import send_mail
+from django.core.mail import get_connection, send_mail
 from django.conf import settings
 import random
 import string
@@ -10,6 +10,31 @@ from .models import StaffApplication, User, VendorProfile
 def generate_password(length=10):
     characters = string.ascii_letters + string.digits + '!@#$%'
     return ''.join(random.choices(characters, k=length))
+
+
+def _safe_send_email(subject, message, recipient_email):
+    """
+    Best-effort email sender for approval/rejection signals.
+    Network or SMTP issues should not block the admin action itself.
+    """
+    if not recipient_email:
+        return
+
+    try:
+        connection = get_connection(
+            fail_silently=True,
+            timeout=getattr(settings, 'EMAIL_TIMEOUT', 10),
+        )
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[recipient_email],
+            fail_silently=True,
+            connection=connection,
+        )
+    except Exception:
+        pass
 
 
 @receiver(post_save, sender=StaffApplication)
@@ -56,9 +81,9 @@ def handle_application_approval(sender, instance, created, **kwargs):
             )
 
         # send approval email with credentials
-        send_mail(
-            subject    = 'Your Campus Food Account is Approved! 🎉',
-            message    = f'''Hi {instance.full_name},
+        _safe_send_email(
+            subject='Your Campus Food Account is Approved! 🎉',
+            message=f'''Hi {instance.full_name},
 
 Great news! Your application has been approved.
 
@@ -73,9 +98,7 @@ Please change your password after your first login for security.
 
 Regards,
 Campus Food Team''',
-            from_email     = settings.DEFAULT_FROM_EMAIL,
-            recipient_list = [instance.email],
-            fail_silently  = False,
+            recipient_email=instance.email,
         )
 
         print(f"✅ Account created for {instance.full_name} ({instance.role_applied})")
@@ -86,9 +109,9 @@ Campus Food Team''',
     elif instance.status == 'REJECTED':
 
         # send rejection email
-        send_mail(
-            subject    = 'Update on your Campus Food Application',
-            message    = f'''Hi {instance.full_name},
+        _safe_send_email(
+            subject='Update on your Campus Food Application',
+            message=f'''Hi {instance.full_name},
 
 Thank you for applying to Campus Food.
 
@@ -102,9 +125,7 @@ please contact the campus admin.
 
 Regards,
 Campus Food Team''',
-            from_email     = settings.DEFAULT_FROM_EMAIL,
-            recipient_list = [instance.email],
-            fail_silently  = False,
+            recipient_email=instance.email,
         )
 
         print(f"❌ Rejection email sent to {instance.full_name}")

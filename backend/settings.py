@@ -184,6 +184,7 @@ EMAIL_USE_TLS       = True
 EMAIL_HOST_USER     = os.getenv('EMAIL_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_PASSWORD')
 DEFAULT_FROM_EMAIL  = os.getenv('EMAIL_USER')
+EMAIL_TIMEOUT       = int(os.getenv('EMAIL_TIMEOUT', '10'))
 # ─── Default PK ───────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 SESSION_COOKIE_AGE = 3600  # 1 hour
