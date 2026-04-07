@@ -914,9 +914,6 @@ def student_create_order(request):
         status=Payment.PaymentStatus.PENDING,
     )
     
-    # Clear cart
-    cart.items.all().delete()
-    
     return JsonResponse({
         'success': True,
         'razorpay_order_id': razorpay_order['id'],
@@ -968,10 +965,8 @@ def student_verify_payment(request):
         # Update all orders for this payment
         related_orders = Order.objects.filter(
             student=request.user,
-            payment=payment
-        ) | Order.objects.filter(
-            student=request.user,
-            total_amount=payment.amount
+            id__in=data.get('order_ids') or [],
+            payment_status=Order.PaymentStatus.PENDING,
         )
         
         for order in related_orders:
@@ -984,6 +979,10 @@ def student_verify_payment(request):
                 f"Payment successful! Your order {order.order_code} has been placed.",
                 email_subject='Payment Successful',
             )
+
+        cart = Cart.objects.filter(student=request.user).first()
+        if cart:
+            cart.items.all().delete()
     except Payment.DoesNotExist:
         return JsonResponse({'error': 'Payment record not found'}, status=404)
     

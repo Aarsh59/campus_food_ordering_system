@@ -1482,6 +1482,7 @@ class EndToEndOrderingTest(TestCase):
         self.assertTrue(data['success'])
         order_ids = data['orders']
         order_id = order_ids[0]  # Get first order
+        self.assertEqual(CartItem.objects.filter(cart__student=self.student).count(), 1)
         order = Order.objects.get(id=order_id)
         self.assertEqual(order.student, self.student)
         self.assertEqual(order.vendor, self.vendor_profile)
@@ -1582,3 +1583,47 @@ class EndToEndOrderingTest(TestCase):
         self.assertEqual(order.payment_status, Order.PaymentStatus.FAILED)
         self.assertEqual(order.vendor_status, Order.VendorStatus.CANCELLED)
         self.assertEqual(payment.status, Payment.PaymentStatus.CANCELLED)
+        self.assertEqual(CartItem.objects.filter(cart__student=self.student).count(), 1)
+
+    @patch('users.views.razorpay.Client')
+    def test_successful_payment_clears_cart(self, mock_razorpay_client):
+        mock_client_instance = mock_razorpay_client.return_value
+        mock_client_instance.order.create.return_value = {
+            'id': 'order_success_123',
+            'amount': 10000,
+            'currency': 'INR'
+        }
+
+        client = Client()
+        client.login(username='student1', password='Test@1234')
+        client.post(reverse('student_add_to_cart', args=[self.menu_item.id]), {
+            'quantity': 1
+        })
+
+        create_response = client.post(reverse('student_create_order'), {
+            'delivery_address': 'IIT Kanpur, Hall 1'
+        })
+        self.assertEqual(create_response.status_code, 200)
+        created_data = create_response.json()
+        self.assertEqual(CartItem.objects.filter(cart__student=self.student).count(), 1)
+
+        mock_client_instance.utility.verify_payment_signature.return_value = None
+        verify_response = client.post(
+            reverse('student_verify_payment'),
+            data={
+                'razorpay_order_id': created_data['razorpay_order_id'],
+                'razorpay_payment_id': 'pay_success_123',
+                'razorpay_signature': 'signature_123',
+                'order_ids': created_data['orders'],
+            },
+            content_type='application/json'
+        )
+        self.assertEqual(verify_response.status_code, 200)
+        self.assertTrue(verify_response.json()['success'])
+
+        order = Order.objects.get(id=created_data['orders'][0])
+        payment = Payment.objects.get(razorpay_order_id=created_data['razorpay_order_id'])
+
+        self.assertEqual(order.payment_status, Order.PaymentStatus.COMPLETED)
+        self.assertEqual(payment.status, Payment.PaymentStatus.SUCCESS)
+        self.assertEqual(CartItem.objects.filter(cart__student=self.student).count(), 0)

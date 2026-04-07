@@ -124,7 +124,7 @@ function initiatePayment(data) {
         order_id: data.razorpay_order_id,
         handler: function(response) {
             paymentResolved = true;
-            verifyPayment(response);
+            verifyPayment(response, data);
         },
         modal: {
             ondismiss: function() {
@@ -159,7 +159,7 @@ function initiatePayment(data) {
     rzp.open();
 }
 
-function verifyPayment(response) {
+function verifyPayment(response, orderData) {
     const form = new FormData();
     form.append('razorpay_order_id', response.razorpay_order_id);
     form.append('razorpay_payment_id', response.razorpay_payment_id);
@@ -174,7 +174,8 @@ function verifyPayment(response) {
         body: JSON.stringify({
             razorpay_order_id: response.razorpay_order_id,
             razorpay_payment_id: response.razorpay_payment_id,
-            razorpay_signature: response.razorpay_signature
+            razorpay_signature: response.razorpay_signature,
+            order_ids: orderData.orders
         })
     })
     .then(r => r.json())
