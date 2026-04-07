@@ -192,10 +192,13 @@ GOOGLE_MAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY', '')
 RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
 RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', '')
 
-EMAIL_BACKEND = _env_value('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
 RESEND_API_KEY = _env_value('RESEND_API_KEY')
-if RESEND_API_KEY:
-    EMAIL_BACKEND = _env_value('EMAIL_BACKEND', default='users.email_backends.ResendEmailBackend')
+EMAIL_BACKEND = _env_value(
+    'EMAIL_BACKEND',
+    default='users.email_backends.ResendEmailBackend' if RESEND_API_KEY else 'django.core.mail.backends.smtp.EmailBackend',
+)
+if RESEND_API_KEY and EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend':
+    EMAIL_BACKEND = 'users.email_backends.ResendEmailBackend'
 EMAIL_HOST = _env_value('EMAIL_HOST', default='smtp.gmail.com')
 EMAIL_PORT = int(_env_value('EMAIL_PORT', default='587'))
 EMAIL_USE_SSL = _env_bool('EMAIL_USE_SSL', default=False)

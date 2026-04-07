@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.mail import send_mail
 from django.core.management.base import BaseCommand, CommandError
 
 from users.email_utils import send_app_email
@@ -20,6 +21,11 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('recipient_email', help='Email address that should receive the SMTP test message.')
+        parser.add_argument(
+            '--strict',
+            action='store_true',
+            help='Raise and print the underlying backend exception instead of using the safe app email helper.',
+        )
 
     def handle(self, *args, **options):
         recipient_email = options['recipient_email']
@@ -31,11 +37,23 @@ class Command(BaseCommand):
         self.stdout.write(f'Resend API key configured: {bool(getattr(settings, "RESEND_API_KEY", ""))}')
         self.stdout.write(f'From: {settings.DEFAULT_FROM_EMAIL or "not set"}')
 
-        sent = send_app_email(
-            subject='Campus Food SMTP test',
-            message='If you received this, Campus Food SMTP is configured correctly.',
-            recipient_email=recipient_email,
-        )
+        subject = 'Campus Food email backend test'
+        message = 'If you received this, Campus Food email delivery is configured correctly.'
+
+        if options['strict']:
+            sent = send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL or settings.EMAIL_HOST_USER,
+                recipient_list=[recipient_email],
+                fail_silently=False,
+            )
+        else:
+            sent = send_app_email(
+                subject=subject,
+                message=message,
+                recipient_email=recipient_email,
+            )
 
         if not sent:
             raise CommandError('Test email was not sent. Check the error log above for the exact email backend failure.')
