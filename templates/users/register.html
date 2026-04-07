@@ -23,21 +23,13 @@
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Phone Number</label>
-                    <div class="input-group">
-                        <input type="tel" name="phone" id="phone" class="form-control" 
-                               pattern="[0-9]{10}" maxlength="10" required>
-                        <button type="button" class="btn btn-outline-primary" onclick="sendOtp('PHONE')">Send Mobile OTP</button>
-                    </div>
+                    <input type="tel" name="phone" id="phone" class="form-control" 
+                           pattern="[0-9]{10}" maxlength="10" required>
                     <div class="form-text">10 digit mobile number</div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Email OTP</label>
                     <input type="text" name="email_otp" class="form-control"
-                           pattern="[0-9]{6}" maxlength="6" required>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Mobile OTP</label>
-                    <input type="text" name="phone_otp" class="form-control"
                            pattern="[0-9]{6}" maxlength="6" required>
                 </div>
                 <div id="otp-status" class="small mb-3"></div>
@@ -75,9 +67,8 @@ function setOtpStatus(message, isError) {
 function sendOtp(channel) {
     const form = new FormData()
     form.append('purpose', 'STUDENT_REGISTER')
-    form.append('channel', channel)
+    form.append('channel', 'EMAIL')
     form.append('email', document.getElementById('email').value)
-    form.append('phone', document.getElementById('phone').value)
 
     fetch('{% url "send_registration_otp" %}', {
         method: 'POST',

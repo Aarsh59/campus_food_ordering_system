@@ -131,47 +131,36 @@ def send_registration_otp(request):
     if channel not in ContactOTP.Channel.values:
         return JsonResponse({'success': False, 'error': 'Invalid OTP channel'}, status=400)
 
-    if channel == ContactOTP.Channel.EMAIL:
-        if not is_allowed_email_domain(email):
-            return JsonResponse({
-                'success': False,
-                'error': f'Only {settings.ALLOWED_EMAIL_DOMAIN} emails are allowed',
-            }, status=400)
-        if purpose == ContactOTP.Purpose.STUDENT_REGISTER and User.objects.filter(email=email).exists():
-            return JsonResponse({'success': False, 'error': 'Email already registered'}, status=400)
-        if purpose == ContactOTP.Purpose.STAFF_APPLICATION and StaffApplication.objects.filter(email=email).exists():
-            return JsonResponse({'success': False, 'error': 'An application with this email already exists'}, status=400)
-        sent = send_otp(purpose, channel, email)
+    if channel != ContactOTP.Channel.EMAIL:
+        return JsonResponse({'success': False, 'error': 'Only email OTP is supported right now'}, status=400)
+
+    if not is_allowed_email_domain(email):
         return JsonResponse({
-            'success': sent,
-            'message': 'Email OTP sent. Please check your inbox.',
-            'error': '' if sent else 'Could not send email OTP. Please try again.',
-        }, status=200 if sent else 500)
-
-    if not is_valid_phone(phone):
-        return JsonResponse({'success': False, 'error': 'Enter a valid 10 digit mobile number'}, status=400)
-
-    sent = send_otp(purpose, channel, phone)
+            'success': False,
+            'error': f'Only {settings.ALLOWED_EMAIL_DOMAIN} emails are allowed',
+        }, status=400)
+    if purpose == ContactOTP.Purpose.STUDENT_REGISTER and User.objects.filter(email=email).exists():
+        return JsonResponse({'success': False, 'error': 'Email already registered'}, status=400)
+    if purpose == ContactOTP.Purpose.STAFF_APPLICATION and StaffApplication.objects.filter(email=email).exists():
+        return JsonResponse({'success': False, 'error': 'An application with this email already exists'}, status=400)
+    sent = send_otp(purpose, channel, email)
     return JsonResponse({
         'success': sent,
-        'message': 'Mobile OTP sent. Please check your phone.',
-        'error': '' if sent else 'Could not send mobile OTP. SMS provider is not configured or failed.',
+        'message': 'Email OTP sent. Please check your inbox.',
+        'error': '' if sent else 'Could not send email OTP. Please try again.',
     }, status=200 if sent else 500)
 
 
 def _contact_otps_are_valid(request, purpose: str, email: str, phone: str) -> bool:
     email_otp = request.POST.get('email_otp')
-    phone_otp = request.POST.get('phone_otp')
 
     email_verified = verify_otp(purpose, ContactOTP.Channel.EMAIL, email, email_otp, consume=False)
-    phone_verified = verify_otp(purpose, ContactOTP.Channel.PHONE, phone, phone_otp, consume=False)
 
-    if not email_verified or not phone_verified:
-        messages.error(request, 'Please enter the correct email and mobile OTPs before submitting.')
+    if not email_verified:
+        messages.error(request, 'Please enter the correct email OTP before submitting.')
         return False
 
     verify_otp(purpose, ContactOTP.Channel.EMAIL, email, email_otp)
-    verify_otp(purpose, ContactOTP.Channel.PHONE, phone, phone_otp)
     return True
 
 

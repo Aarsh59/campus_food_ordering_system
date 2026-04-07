@@ -214,14 +214,6 @@ EMAIL_TIMEOUT = int(_env_value('EMAIL_TIMEOUT', default='10'))
 # OTP verification settings
 OTP_EXPIRY_MINUTES = int(_env_value('OTP_EXPIRY_MINUTES', default='10'))
 OTP_MAX_ATTEMPTS = int(_env_value('OTP_MAX_ATTEMPTS', default='5'))
-OTP_PHONE_COUNTRY_CODE = _env_value('OTP_PHONE_COUNTRY_CODE', default='+91')
-OTP_SMS_BACKEND = _env_value(
-    'OTP_SMS_BACKEND',
-    default='console' if DEBUG or 'test' in sys.argv else 'twilio',
-)
-TWILIO_ACCOUNT_SID = _env_value('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = _env_value('TWILIO_AUTH_TOKEN')
-TWILIO_FROM_NUMBER = _env_value('TWILIO_FROM_NUMBER')
 # ─── Default PK ───────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 SESSION_COOKIE_AGE = 3600  # 1 hour

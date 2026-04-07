@@ -75,10 +75,8 @@ class RegisterViewTest(TestCase):
 
     def _otp_fields(self, email='newstudent@iitk.ac.in', phone='9876543210'):
         _, email_otp = issue_otp(ContactOTP.Purpose.STUDENT_REGISTER, ContactOTP.Channel.EMAIL, email)
-        _, phone_otp = issue_otp(ContactOTP.Purpose.STUDENT_REGISTER, ContactOTP.Channel.PHONE, phone)
         return {
             'email_otp': email_otp,
-            'phone_otp': phone_otp,
         }
 
     def test_register_page_loads(self):
@@ -205,7 +203,7 @@ class RegisterViewTest(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.json()['success'])
 
-    def test_send_registration_phone_otp_creates_otp(self):
+    def test_send_registration_phone_otp_is_disabled(self):
         response = self.client.post(reverse('send_registration_otp'), {
             'purpose': ContactOTP.Purpose.STUDENT_REGISTER,
             'channel': ContactOTP.Channel.PHONE,
@@ -213,13 +211,8 @@ class RegisterViewTest(TestCase):
             'phone': '9876543210',
         })
 
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()['success'])
-        self.assertTrue(ContactOTP.objects.filter(
-            purpose=ContactOTP.Purpose.STUDENT_REGISTER,
-            channel=ContactOTP.Channel.PHONE,
-            target='9876543210',
-        ).exists())
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()['success'])
 
 
 # ─── Login Tests ──────────────────────────────────────────────────────────────
@@ -321,10 +314,8 @@ class StaffApplicationTest(TestCase):
 
     def _otp_fields(self, email, phone='9876543210'):
         _, email_otp = issue_otp(ContactOTP.Purpose.STAFF_APPLICATION, ContactOTP.Channel.EMAIL, email)
-        _, phone_otp = issue_otp(ContactOTP.Purpose.STAFF_APPLICATION, ContactOTP.Channel.PHONE, phone)
         return {
             'email_otp': email_otp,
-            'phone_otp': phone_otp,
         }
 
     def test_apply_page_loads(self):
