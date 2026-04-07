@@ -1,6 +1,7 @@
 from django.test import TestCase, Client
 from django.urls import reverse
 from django.core import mail
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -58,6 +59,11 @@ class UserModelTest(TestCase):
         self.assertNotEqual(user.password, 'Test@1234')
         self.assertTrue(user.check_password('Test@1234'))
 
+    def test_model_validation_rejects_emoji_username(self):
+        user = User(username='test🍕user', phone='9999999999')
+        with self.assertRaises(ValidationError):
+            user.full_clean()
+
 
 # ─── Registration Tests ───────────────────────────────────────────────────────
 class RegisterViewTest(TestCase):
@@ -81,6 +87,28 @@ class RegisterViewTest(TestCase):
         })
         self.assertRedirects(response, reverse('login'))
         self.assertTrue(User.objects.filter(username='newstudent').exists())
+
+    def test_register_allows_ascii_special_username_characters(self):
+        response = self.client.post(self.url, {
+            'username'  : 'new.student+test@iitk_1',
+            'email'     : 'specialuser@iitk.ac.in',
+            'phone'     : '9876543210',
+            'password1' : 'Campus@1234',
+            'password2' : 'Campus@1234',
+        })
+        self.assertRedirects(response, reverse('login'))
+        self.assertTrue(User.objects.filter(username='new.student+test@iitk_1').exists())
+
+    def test_register_rejects_emoji_username(self):
+        response = self.client.post(self.url, {
+            'username'  : 'newstudent🍕',
+            'email'     : 'emojiuser@iitk.ac.in',
+            'phone'     : '9876543210',
+            'password1' : 'Campus@1234',
+            'password2' : 'Campus@1234',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(User.objects.filter(email='emojiuser@iitk.ac.in').exists())
 
     def test_register_with_invalid_email_domain(self):
         response = self.client.post(self.url, {
@@ -120,6 +148,23 @@ class RegisterViewTest(TestCase):
         })
         self.assertEqual(response.status_code, 200)
         self.assertEqual(User.objects.filter(username='existing').count(), 1)
+
+    def test_register_duplicate_username_is_case_insensitive(self):
+        User.objects.create_user(
+            username='Existing',
+            email='existing@iitk.ac.in',
+            password='Campus@1234',
+            phone='9999999999'
+        )
+        response = self.client.post(self.url, {
+            'username'  : 'existing',
+            'email'     : 'another@iitk.ac.in',
+            'phone'     : '9876543210',
+            'password1' : 'Campus@1234',
+            'password2' : 'Campus@1234',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(User.objects.filter(username__iexact='existing').count(), 1)
 
     def test_register_duplicate_email(self):
         User.objects.create_user(
@@ -343,6 +388,54 @@ class SignalTest(TestCase):
         self.assertEqual(
             User.objects.filter(email='john@vendor.com').count(), 1
         )
+
+    def test_reapproval_resends_email_for_existing_user(self):
+        existing_user = User.objects.create_user(
+            username='john',
+            email='john@vendor.com',
+            password='Test@1234',
+            phone='9876543210',
+            role=User.Role.VENDOR
+        )
+        mail.outbox = []
+
+        self.application.status = 'APPROVED'
+        self.application.save()
+
+        self.assertEqual(User.objects.filter(email='john@vendor.com').count(), 1)
+        self.assertEqual(existing_user.username, User.objects.get(email='john@vendor.com').username)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('john@vendor.com', mail.outbox[0].to)
+        self.assertIn(existing_user.username, mail.outbox[0].body)
+
+    def test_approval_sanitizes_generated_username(self):
+        application = StaffApplication.objects.create(
+            full_name      = 'Emoji Vendor',
+            email          = 'food🍕vendor@vendor.com',
+            phone          = '9876543210',
+            role_applied   = 'VENDOR',
+            aadhaar_number = '123456789012',
+            outlet_name    = 'Emoji Outlet',
+        )
+
+        application.status = 'APPROVED'
+        application.save()
+
+        self.assertTrue(User.objects.filter(username='foodvendor').exists())
+
+    def test_approval_generated_username_clash_is_case_insensitive(self):
+        User.objects.create_user(
+            username='John',
+            email='existing@vendor.com',
+            password='Test@1234',
+            phone='9876543210',
+            role=User.Role.VENDOR
+        )
+
+        self.application.status = 'APPROVED'
+        self.application.save()
+
+        self.assertTrue(User.objects.filter(username='john1').exists())
 
 
 # ─── Model Tests for Student/Vendor/Delivery ───────────────────────────────────

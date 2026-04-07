@@ -8,7 +8,7 @@ from django.core.mail import send_mail
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.utils import timezone
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from .models import (
     User,
     StaffApplication,
@@ -25,6 +25,7 @@ from .models import (
     DeliveryBroadcastResponse,
     OrderTracking,
 )
+from .username_validation import USERNAME_ALLOWED_DESCRIPTION, is_valid_username
 
 import json
 import urllib.parse
@@ -109,8 +110,8 @@ def _reverse_geocode_lat_lng(lat: float, lng: float) -> tuple[str, str]:
 # ─── Register (Students Only) ─────────────────────────────────────────────────
 def register_view(request):
     if request.method == 'POST':
-        username   = request.POST.get('username')
-        email      = request.POST.get('email')
+        username   = (request.POST.get('username') or '').strip()
+        email      = (request.POST.get('email') or '').strip().lower()
         phone      = request.POST.get('phone')
         password1  = request.POST.get('password1')
         password2  = request.POST.get('password2')
@@ -120,11 +121,15 @@ def register_view(request):
             messages.error(request, 'Passwords do not match')
             return render(request, 'users/register.html')
 
+        if not is_valid_username(username):
+            messages.error(request, f'Username can contain {USERNAME_ALLOWED_DESCRIPTION}')
+            return render(request, 'users/register.html')
+
         if not email.endswith(settings.ALLOWED_EMAIL_DOMAIN):
             messages.error(request, f'Only {settings.ALLOWED_EMAIL_DOMAIN} emails are allowed')
             return render(request, 'users/register.html')
 
-        if User.objects.filter(username=username).exists():
+        if User.objects.filter(username__iexact=username).exists():
             messages.error(request, 'Username already taken')
             return render(request, 'users/register.html')
 
@@ -133,13 +138,18 @@ def register_view(request):
             return render(request, 'users/register.html')
 
         # create user
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            password=password1,
-            phone=phone,
-            role=User.Role.STUDENT
-        )
+        try:
+            User.objects.create_user(
+                username=username,
+                email=email,
+                password=password1,
+                phone=phone,
+                role=User.Role.STUDENT
+            )
+        except IntegrityError:
+            messages.error(request, 'Username already taken')
+            return render(request, 'users/register.html')
+
         messages.success(request, 'Account created! Please log in.')
         return redirect('login')
 
