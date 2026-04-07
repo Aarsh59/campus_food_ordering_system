@@ -273,17 +273,29 @@
     const mapEl = document.getElementById('vendorOutletMap');
     if (!mapEl || !window.google) return;
 
-    const defaultCenter = { lat: 26.5070, lng: 80.4360 }; // IIT Kanpur vicinity
+    const defaultCenter = { lat: 26.5106, lng: 80.2461 }; // G66M+W8P, Kalyanpur, Kanpur
+    const savedCoords = parseGoogleMapsCoordinates('{{ vendor_profile.google_maps_location|default:""|escapejs }}');
+    const initialCenter = savedCoords || defaultCenter;
     const map = new google.maps.Map(mapEl, {
-      center: defaultCenter,
+      center: initialCenter,
       zoom: 15
     });
 
     const marker = new google.maps.Marker({
       map: map,
-      position: null,
+      position: initialCenter,
       draggable: true
     });
+
+    setSelection(initialCenter.lat, initialCenter.lng);
+
+    function parseGoogleMapsCoordinates(url) {
+      const match = (url || '').match(/query=(-?\d+\.?\d*),(-?\d+\.?\d*)/);
+      if (!match) {
+        return null;
+      }
+      return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
+    }
 
     function setSelection(lat, lng) {
       marker.setPosition({ lat: lat, lng: lng });
