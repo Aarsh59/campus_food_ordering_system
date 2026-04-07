@@ -193,6 +193,9 @@ RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
 RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', '')
 
 EMAIL_BACKEND = _env_value('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
+RESEND_API_KEY = _env_value('RESEND_API_KEY')
+if RESEND_API_KEY:
+    EMAIL_BACKEND = _env_value('EMAIL_BACKEND', default='users.email_backends.ResendEmailBackend')
 EMAIL_HOST = _env_value('EMAIL_HOST', default='smtp.gmail.com')
 EMAIL_PORT = int(_env_value('EMAIL_PORT', default='587'))
 EMAIL_USE_SSL = _env_bool('EMAIL_USE_SSL', default=False)

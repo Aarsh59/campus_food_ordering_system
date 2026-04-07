@@ -8,13 +8,14 @@ logger = logging.getLogger(__name__)
 
 def send_app_email(subject: str, message: str, recipient_email: str) -> bool:
     """
-    Send a plain-text app email and log SMTP failures instead of hiding them.
+    Send a plain-text app email through the configured Django email backend.
     """
     if not recipient_email:
         logger.warning('Skipping email because recipient address is empty.')
         return False
 
-    if not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD:
+    uses_smtp = settings.EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend'
+    if uses_smtp and (not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD):
         logger.error('Email is not configured. Set EMAIL_USER/EMAIL_PASSWORD or EMAIL_HOST_USER/EMAIL_HOST_PASSWORD.')
         return False
 

@@ -21,6 +21,7 @@ def _build_login_url() -> str:
         os.getenv('APP_URL')
         or os.getenv('PUBLIC_URL')
         or os.getenv('RENDER_EXTERNAL_URL')
+        or _railway_public_url()
         or 'http://localhost:8000'
     ).rstrip('/')
     return f'{base_url}/login/'
@@ -31,9 +32,19 @@ def _build_password_reset_url() -> str:
         os.getenv('APP_URL')
         or os.getenv('PUBLIC_URL')
         or os.getenv('RENDER_EXTERNAL_URL')
+        or _railway_public_url()
         or 'http://localhost:8000'
     ).rstrip('/')
     return f'{base_url}/password-reset/'
+
+
+def _railway_public_url() -> str:
+    domain = (os.getenv('RAILWAY_PUBLIC_DOMAIN') or '').strip()
+    if not domain:
+        return ''
+    if '://' in domain:
+        return domain
+    return f'https://{domain}'
 
 
 def _build_unique_username(email: str) -> str:
