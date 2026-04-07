@@ -779,6 +779,20 @@ class StudentVendorDetailTest(TestCase):
         self.assertContains(response, 'Test Vendor')
         self.assertContains(response, 'Burger')
 
+    def test_vendor_detail_quantity_starts_at_zero(self):
+        response = self.client.get(reverse('student_vendor_detail', args=[self.vendor_profile.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'id="qty-{self.menu_item.id}" value="0"')
+
+    def test_vendor_detail_shows_existing_cart_quantity(self):
+        cart = Cart.objects.create(student=self.student)
+        CartItem.objects.create(cart=cart, menu_item=self.menu_item, quantity=3)
+
+        response = self.client.get(reverse('student_vendor_detail', args=[self.vendor_profile.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'id="qty-{self.menu_item.id}" value="3"')
+
 
 class StudentCartTest(TestCase):
 
@@ -809,8 +823,7 @@ class StudentCartTest(TestCase):
         )
 
     def test_add_to_cart(self):
-        response = self.client.post(reverse('student_add_to_cart'), {
-            'menu_item_id': self.menu_item.id,
+        response = self.client.post(reverse('student_add_to_cart', args=[self.menu_item.id]), {
             'quantity': 2
         })
         self.assertEqual(response.status_code, 200)
@@ -862,6 +875,27 @@ class StudentCartTest(TestCase):
         self.assertTrue(data['success'])
         self.assertEqual(data['cart_count'], 0)
         self.assertFalse(CartItem.objects.filter(cart=cart, menu_item=self.menu_item).exists())
+
+    def test_update_menu_cart_item_creates_or_updates_quantity(self):
+        response = self.client.post(reverse('student_update_menu_cart_item', args=[self.menu_item.id]), {
+            'quantity': 3
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(data['cart_count'], 1)
+        cart = Cart.objects.get(student=self.student)
+        cart_item = CartItem.objects.get(cart=cart, menu_item=self.menu_item)
+        self.assertEqual(cart_item.quantity, 3)
+
+        response = self.client.post(reverse('student_update_menu_cart_item', args=[self.menu_item.id]), {
+            'quantity': 2
+        })
+
+        self.assertEqual(response.status_code, 200)
+        cart_item.refresh_from_db()
+        self.assertEqual(cart_item.quantity, 2)
 
 
 class StudentCheckoutTest(TestCase):

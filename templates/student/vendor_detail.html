@@ -83,7 +83,7 @@ function addToCart(itemId) {
     const form = new FormData();
     form.append('quantity', qty);
     
-    fetch('{% url "student_add_to_cart" 0 %}'.replace('0', itemId), {
+    fetch('{% url "student_update_menu_cart_item" 0 %}'.replace('0', itemId), {
         method: 'POST',
         headers: {
             'X-CSRFToken': getCsrfToken(),
@@ -95,6 +95,7 @@ function addToCart(itemId) {
         if (data.success) {
             alert(data.message);
             document.getElementById('cart-count').innerHTML = data.cart_count;
+            document.getElementById('qty-' + itemId).value = qty;
         } else {
             alert('Error: ' + data.error);
         }
@@ -105,36 +106,7 @@ function updateQty(itemId, change) {
     const input = document.getElementById('qty-' + itemId);
     const currentQuantity = parseInt(input.value, 10) || 0;
     const nextQuantity = currentQuantity + change;
-
-    if (nextQuantity < 1) {
-        removeMenuItemFromCart(itemId);
-        return;
-    }
-
-    input.value = nextQuantity;
-    addToCart(itemId);
-}
-
-function removeMenuItemFromCart(itemId) {
-    const form = new FormData();
-    form.append('quantity', '0');
-
-    fetch('{% url "student_update_menu_cart_item" 0 %}'.replace('0', itemId), {
-        method: 'POST',
-        headers: {
-            'X-CSRFToken': getCsrfToken(),
-        },
-        body: form
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.success) {
-            document.getElementById('qty-' + itemId).value = 1;
-            document.getElementById('cart-count').innerHTML = data.cart_count;
-        } else {
-            alert('Error: ' + data.error);
-        }
-    });
+    input.value = Math.max(0, nextQuantity);
 }
 </script>
 {% endblock %}
@@ -196,12 +168,12 @@ function removeMenuItemFromCart(itemId) {
                             <div class="menu-item-price">₹{{ item.price }}</div>
                             <div class="quantity-selector">
                                 <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, -1)">−</button>
-                                <input type="number" id="qty-{{ item.id }}" value="{{ row.cart_quantity }}" min="1" max="20" style="width: 50px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 4px;">
+                                <input type="number" id="qty-{{ item.id }}" value="{{ row.cart_quantity }}" min="0" max="20" style="width: 50px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 4px;">
                                 <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, 1)">+</button>
                             </div>
                         </div>
                         <button class="btn btn-primary w-100 mt-3" onclick="addToCart({{ item.id }})">
-                            Add to Cart
+                            Update Cart
                         </button>
                     </div>
                 </div>

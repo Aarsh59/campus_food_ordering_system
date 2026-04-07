@@ -726,7 +726,7 @@ def student_vendor_detail(request, vendor_id: int):
     menu_item_rows = [
         {
             'item': item,
-            'cart_quantity': cart_items_dict.get(item.id, 1),
+            'cart_quantity': cart_items_dict.get(item.id, 0),
         }
         for item in menu_items
     ]
