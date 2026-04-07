@@ -1,13 +1,12 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.core.mail import get_connection, send_mail
-from django.conf import settings
 import logging
 import os
 import random
 import string
 from .models import StaffApplication, User, VendorProfile
 from .username_validation import sanitize_username_seed
+from .email_utils import send_app_email
 
 logger = logging.getLogger(__name__)
 
@@ -52,31 +51,7 @@ def _safe_send_email(subject, message, recipient_email):
     Best-effort email sender for approval/rejection signals.
     Returns whether the email was accepted by the backend.
     """
-    if not recipient_email:
-        logger.warning('Skipping email because recipient address is empty.')
-        return False
-
-    try:
-        connection = get_connection(
-            fail_silently=False,
-            timeout=getattr(settings, 'EMAIL_TIMEOUT', 10),
-        )
-        sent_count = send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL or settings.EMAIL_HOST_USER,
-            recipient_list=[recipient_email],
-            fail_silently=False,
-            connection=connection,
-        )
-        if sent_count:
-            logger.info('Approval workflow email sent to %s', recipient_email)
-            return True
-        logger.warning('Email backend returned 0 recipients for %s', recipient_email)
-        return False
-    except Exception:
-        logger.exception('Failed to send email to %s', recipient_email)
-        return False
+    return send_app_email(subject=subject, message=message, recipient_email=recipient_email)
 
 
 @receiver(post_save, sender=StaffApplication)

@@ -4,7 +4,6 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.conf import settings
-from django.core.mail import send_mail
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.utils import timezone
@@ -26,6 +25,7 @@ from .models import (
     OrderTracking,
 )
 from .username_validation import USERNAME_ALLOWED_DESCRIPTION, is_valid_username
+from .email_utils import send_app_email
 
 import json
 import urllib.parse
@@ -462,18 +462,22 @@ def _safe_send_email(subject: str, message: str, recipient_email: str):
     """
     Best-effort email sender. Failures shouldn't break vendor workflows.
     """
-    if not recipient_email:
-        return
-    try:
-        send_mail(
-            subject=subject,
+    return send_app_email(subject=subject, message=message, recipient_email=recipient_email)
+
+
+def _notify_user(recipient: User, order: Order, message: str, email_subject: str = ''):
+    notification = Notification.objects.create(
+        recipient=recipient,
+        order=order,
+        message=message,
+    )
+    if email_subject:
+        _safe_send_email(
+            subject=email_subject,
             message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[recipient_email],
-            fail_silently=True,
+            recipient_email=recipient.email,
         )
-    except Exception:
-        pass
+    return notification
 
 
 @login_required
@@ -494,12 +498,7 @@ def vendor_ticket_accept(request, order_id: int):
     order.save()
 
     message = f"Your order {order.order_code or order.id} has been accepted by the vendor."
-    Notification.objects.create(recipient=order.student, order=order, message=message)
-    _safe_send_email(
-        subject='Order Accepted',
-        message=message,
-        recipient_email=order.student.email,
-    )
+    _notify_user(order.student, order, message, email_subject='Order Accepted')
 
     messages.success(request, 'Ticket accepted. Student has been notified.')
     return redirect('vendor_dashboard')
@@ -523,12 +522,7 @@ def vendor_ticket_reject(request, order_id: int):
     order.save()
 
     message = f"Your order {order.order_code or order.id} has been rejected by the vendor."
-    Notification.objects.create(recipient=order.student, order=order, message=message)
-    _safe_send_email(
-        subject='Order Rejected',
-        message=message,
-        recipient_email=order.student.email,
-    )
+    _notify_user(order.student, order, message, email_subject='Order Rejected')
 
     messages.success(request, 'Ticket rejected. Student has been notified.')
     return redirect('vendor_dashboard')
@@ -562,12 +556,7 @@ def vendor_order_status_update(request, order_id: int):
         f"Your order {order.order_code or order.id} status updated to: "
         f"{order.get_vendor_status_display()}."
     )
-    Notification.objects.create(recipient=order.student, order=order, message=message)
-    _safe_send_email(
-        subject='Order Status Updated',
-        message=message,
-        recipient_email=order.student.email,
-    )
+    _notify_user(order.student, order, message, email_subject='Order Status Updated')
 
     messages.success(request, 'Order status updated. Student has been notified.')
     return redirect('vendor_dashboard')
@@ -989,11 +978,11 @@ def student_verify_payment(request):
             order.payment_status = Order.PaymentStatus.COMPLETED
             order.save()
             
-            # Create notification
-            Notification.objects.create(
-                recipient=request.user,
-                order=order,
-                message=f"Payment successful! Your order {order.order_code} has been placed."
+            _notify_user(
+                request.user,
+                order,
+                f"Payment successful! Your order {order.order_code} has been placed.",
+                email_subject='Payment Successful',
             )
     except Payment.DoesNotExist:
         return JsonResponse({'error': 'Payment record not found'}, status=404)
@@ -1053,10 +1042,11 @@ def student_cancel_payment(request):
         order.vendor_status = Order.VendorStatus.CANCELLED
         order.save(update_fields=['payment_status', 'vendor_status', 'updated_at'])
 
-        Notification.objects.create(
-            recipient=request.user,
-            order=order,
-            message=f"{cancellation_reason}. Order {order.order_code} was cancelled.",
+        _notify_user(
+            request.user,
+            order,
+            f"{cancellation_reason}. Order {order.order_code} was cancelled.",
+            email_subject='Order Cancelled',
         )
 
     if payment and payment.status == Payment.PaymentStatus.PENDING:
@@ -1323,10 +1313,11 @@ def vendor_broadcast_delivery(request, order_id: int):
     
     # Notify all delivery personnel
     for personnel in delivery_personnel:
-        Notification.objects.create(
-            recipient=personnel,
-            order=order,
-            message=f"New delivery request: {order.order_code} from {vendor_profile.outlet_name}. Order ready for pickup."
+        _notify_user(
+            personnel,
+            order,
+            f"New delivery request: {order.order_code} from {vendor_profile.outlet_name}. Order ready for pickup.",
+            email_subject='New Delivery Request',
         )
     
     messages.success(request, 'Order broadcasted to delivery personnel successfully.')
@@ -1469,10 +1460,11 @@ def delivery_accept_broadcast(request, broadcast_id: int):
             my_response.responded_at = timezone.now()
             my_response.save()
 
-            Notification.objects.create(
-                recipient=broadcast.order.student,
-                order=broadcast.order,
-                message=f'Your order {broadcast.order.order_code} has been accepted by a delivery partner and pickup is on the way.'
+            _notify_user(
+                broadcast.order.student,
+                broadcast.order,
+                f'Your order {broadcast.order.order_code} has been accepted by a delivery partner and pickup is on the way.',
+                email_subject='Delivery Partner Assigned',
             )
 
             return JsonResponse({
@@ -1597,10 +1589,11 @@ def delivery_mark_picked_up(request, assignment_id: int):
     order.save()
     
     # Notify student
-    Notification.objects.create(
-        recipient=order.student,
-        order=order,
-        message=f'Your order {order.order_code} has been picked up! View live tracking of your delivery.'
+    _notify_user(
+        order.student,
+        order,
+        f'Your order {order.order_code} has been picked up! View live tracking of your delivery.',
+        email_subject='Order Picked Up',
     )
     
     return JsonResponse({
@@ -1638,10 +1631,11 @@ def delivery_start_delivery(request, assignment_id: int):
     order.save()
     
     # Notify student with tracking link
-    Notification.objects.create(
-        recipient=order.student,
-        order=order,
-        message=f'🚗 Your order {order.order_code} is out for delivery! View live tracking now.'
+    _notify_user(
+        order.student,
+        order,
+        f'🚗 Your order {order.order_code} is out for delivery! View live tracking now.',
+        email_subject='Order Out For Delivery',
     )
     
     return JsonResponse({
@@ -1674,10 +1668,11 @@ def delivery_mark_delivered(request, assignment_id: int):
     order.save()
     
     # Notify student
-    Notification.objects.create(
-        recipient=order.student,
-        order=order,
-        message=f'✅ Your order {order.order_code} has been delivered! Please rate your experience.'
+    _notify_user(
+        order.student,
+        order,
+        f'✅ Your order {order.order_code} has been delivered! Please rate your experience.',
+        email_subject='Order Delivered',
     )
     
     return JsonResponse({

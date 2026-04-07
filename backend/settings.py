@@ -17,6 +17,21 @@ def _split_env_list(name):
     return [item.strip() for item in os.getenv(name, '').split(',') if item.strip()]
 
 
+def _env_value(*names, default=''):
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value.strip()
+    return default
+
+
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
 def _normalize_origin(value):
     value = (value or '').strip()
     if not value:
@@ -177,14 +192,18 @@ GOOGLE_MAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY', '')
 RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
 RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', '')
 
-EMAIL_BACKEND       = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST          = 'smtp.gmail.com'
-EMAIL_PORT          = 587
-EMAIL_USE_TLS       = True
-EMAIL_HOST_USER     = os.getenv('EMAIL_USER')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_PASSWORD')
-DEFAULT_FROM_EMAIL  = os.getenv('EMAIL_USER')
-EMAIL_TIMEOUT       = int(os.getenv('EMAIL_TIMEOUT', '10'))
+EMAIL_BACKEND = _env_value('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST = _env_value('EMAIL_HOST', default='smtp.gmail.com')
+EMAIL_PORT = int(_env_value('EMAIL_PORT', default='587'))
+EMAIL_USE_SSL = _env_bool('EMAIL_USE_SSL', default=False)
+EMAIL_USE_TLS = _env_bool('EMAIL_USE_TLS', default=not EMAIL_USE_SSL)
+EMAIL_HOST_USER = _env_value('EMAIL_HOST_USER', 'EMAIL_USER')
+EMAIL_HOST_PASSWORD = _env_value('EMAIL_HOST_PASSWORD', 'EMAIL_PASSWORD')
+if EMAIL_HOST.endswith('gmail.com'):
+    EMAIL_HOST_PASSWORD = EMAIL_HOST_PASSWORD.replace(' ', '')
+DEFAULT_FROM_EMAIL = _env_value('DEFAULT_FROM_EMAIL', default=EMAIL_HOST_USER)
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
+EMAIL_TIMEOUT = int(_env_value('EMAIL_TIMEOUT', default='10'))
 # ─── Default PK ───────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 SESSION_COOKIE_AGE = 3600  # 1 hour
