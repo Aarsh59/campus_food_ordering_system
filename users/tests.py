@@ -666,6 +666,30 @@ class StudentDashboardTest(TestCase):
         response = self.client.get(reverse('student_dashboard'))
         self.assertEqual(response.status_code, 302)  # Redirect to login
 
+    def test_dashboard_order_count_excludes_failed_orders(self):
+        vendor_user = User.objects.create_user(
+            username='vendor1',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.VENDOR
+        )
+        vendor_profile = VendorProfile.objects.create(user=vendor_user, outlet_name='Test Vendor')
+        Order.objects.create(
+            student=self.student,
+            vendor=vendor_profile,
+            payment_status=Order.PaymentStatus.COMPLETED,
+        )
+        Order.objects.create(
+            student=self.student,
+            vendor=vendor_profile,
+            payment_status=Order.PaymentStatus.FAILED,
+            vendor_status=Order.VendorStatus.CANCELLED,
+        )
+
+        response = self.client.get(reverse('student_dashboard'))
+
+        self.assertEqual(response.context['orders_placed_count'], 1)
+
 
 class StudentVendorsListTest(TestCase):
 
@@ -824,6 +848,20 @@ class StudentCartTest(TestCase):
         self.assertTrue(data['success'])
         cart_item.refresh_from_db()
         self.assertEqual(cart_item.quantity, 3)
+
+    def test_update_menu_cart_item_zero_removes_item(self):
+        cart = Cart.objects.create(student=self.student)
+        CartItem.objects.create(cart=cart, menu_item=self.menu_item, quantity=1)
+
+        response = self.client.post(reverse('student_update_menu_cart_item', args=[self.menu_item.id]), {
+            'quantity': 0
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(data['cart_count'], 0)
+        self.assertFalse(CartItem.objects.filter(cart=cart, menu_item=self.menu_item).exists())
 
 
 class StudentCheckoutTest(TestCase):

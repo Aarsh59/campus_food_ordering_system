@@ -68,7 +68,7 @@
 <div class="row mb-4">
     <div class="col-md-3">
         <div class="stat-card">
-            <h3>{% if request.user.orders_as_student.count %}{{ request.user.orders_as_student.count }}{% else %}0{% endif %}</h3>
+            <h3>{{ orders_placed_count|default:0 }}</h3>
             <p>Orders Placed</p>
         </div>
     </div>
@@ -143,7 +143,7 @@
         <div class="card">
             <div class="card-body">
                 <h5 class="card-title mb-3">Your Recent Orders</h5>
-                {% if request.user.orders_as_student.all %}
+                {% if recent_orders %}
                     <div class="table-responsive">
                         <table class="table table-hover">
                             <thead class="table-light">
@@ -157,7 +157,7 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                {% for order in request.user.orders_as_student.all|slice:":5" %}
+                                {% for order in recent_orders %}
                                     <tr>
                                         <td><strong>{{ order.order_code }}</strong></td>
                                         <td>{{ order.vendor.outlet_name }}</td>

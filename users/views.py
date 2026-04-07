@@ -240,7 +240,24 @@ def student_dashboard(request):
         return redirect('login')
     
     notifications = Notification.objects.filter(recipient=request.user).order_by('-created_at')[:50]
-    return render(request, 'student/dashboard.html', {'notifications': notifications})
+    recent_orders = (
+        Order.objects.filter(student=request.user)
+        .select_related('vendor')
+        .order_by('-created_at')[:5]
+    )
+    orders_placed_count = Order.objects.filter(
+        student=request.user,
+        payment_status=Order.PaymentStatus.COMPLETED,
+    ).exclude(
+        vendor_decision=Order.VendorDecision.REJECTED,
+    ).exclude(
+        vendor_status=Order.VendorStatus.CANCELLED,
+    ).count()
+    return render(request, 'student/dashboard.html', {
+        'notifications': notifications,
+        'recent_orders': recent_orders,
+        'orders_placed_count': orders_placed_count,
+    })
 
 
 @login_required
@@ -706,11 +723,17 @@ def student_vendor_detail(request, vendor_id: int):
         cart_items_dict = {
             ci.menu_item_id: ci.quantity for ci in cart.items.filter(menu_item__vendor=vendor)
         }
+    menu_item_rows = [
+        {
+            'item': item,
+            'cart_quantity': cart_items_dict.get(item.id, 1),
+        }
+        for item in menu_items
+    ]
     
     return render(request, 'student/vendor_detail.html', {
         'vendor': vendor,
-        'menu_items': menu_items,
-        'cart_items_dict': cart_items_dict,
+        'menu_item_rows': menu_item_rows,
         'cart_count': cart_count,
         'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
     })
@@ -812,6 +835,45 @@ def student_update_cart_item(request, item_id: int):
         'success': True,
         'message': 'Cart updated',
         'total': float(cart.get_total()),
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def student_update_menu_cart_item(request, item_id: int):
+    """Update a cart item from the menu page using a menu item id."""
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+
+    menu_item = get_object_or_404(MenuItem, id=item_id, is_active=True)
+    cart, _ = Cart.objects.get_or_create(student=request.user)
+
+    quantity = request.POST.get('quantity', '1')
+    try:
+        quantity = int(quantity)
+    except ValueError:
+        return JsonResponse({'error': 'Invalid quantity'}, status=400)
+
+    cart_item = CartItem.objects.filter(cart=cart, menu_item=menu_item).first()
+    if quantity < 1:
+        if cart_item:
+            cart_item.delete()
+        return JsonResponse({
+            'success': True,
+            'message': f'Removed {menu_item.name} from cart',
+            'cart_count': cart.items.count(),
+        })
+
+    if cart_item:
+        cart_item.quantity = quantity
+        cart_item.save()
+    else:
+        CartItem.objects.create(cart=cart, menu_item=menu_item, quantity=quantity)
+
+    return JsonResponse({
+        'success': True,
+        'message': f'Updated {menu_item.name} in cart',
+        'cart_count': cart.items.count(),
     })
 
 
@@ -1085,6 +1147,11 @@ def student_order_detail(request, order_id: int):
     items = order.items.all()
     delivery_assignment = order.delivery_assignment if hasattr(order, 'delivery_assignment') else None
     tracking_updates = list(order.tracking_updates.all()[:100])
+    order_is_cancelled = (
+        order.payment_status == Order.PaymentStatus.FAILED
+        or order.vendor_decision == Order.VendorDecision.REJECTED
+        or order.vendor_status == Order.VendorStatus.CANCELLED
+    )
 
     student_location = None
     if order.delivery_address:
@@ -1101,6 +1168,7 @@ def student_order_detail(request, order_id: int):
         'items': items,
         'delivery_assignment': delivery_assignment,
         'tracking_updates': tracking_updates,
+        'order_is_cancelled': order_is_cancelled,
         'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
         'student_location_json': json.dumps(student_location),
     })

@@ -103,9 +103,38 @@ function addToCart(itemId) {
 
 function updateQty(itemId, change) {
     const input = document.getElementById('qty-' + itemId);
-    let val = parseInt(input.value) + change;
-    if (val < 1) val = 1;
-    input.value = val;
+    const currentQuantity = parseInt(input.value, 10) || 0;
+    const nextQuantity = currentQuantity + change;
+
+    if (nextQuantity < 1) {
+        removeMenuItemFromCart(itemId);
+        return;
+    }
+
+    input.value = nextQuantity;
+    addToCart(itemId);
+}
+
+function removeMenuItemFromCart(itemId) {
+    const form = new FormData();
+    form.append('quantity', '0');
+
+    fetch('{% url "student_update_menu_cart_item" 0 %}'.replace('0', itemId), {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCsrfToken(),
+        },
+        body: form
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('qty-' + itemId).value = 1;
+            document.getElementById('cart-count').innerHTML = data.cart_count;
+        } else {
+            alert('Error: ' + data.error);
+        }
+    });
 }
 </script>
 {% endblock %}
@@ -145,9 +174,10 @@ function updateQty(itemId, change) {
 <!-- Menu Items -->
 <h3 class="mb-4">📋 Menu</h3>
 
-{% if menu_items %}
+{% if menu_item_rows %}
     <div class="row">
-        {% for item in menu_items %}
+        {% for row in menu_item_rows %}
+            {% with item=row.item %}
             <div class="col-md-6 col-lg-4 mb-4">
                 <div class="card menu-item-card">
                     <div class="menu-item-image">
@@ -166,7 +196,7 @@ function updateQty(itemId, change) {
                             <div class="menu-item-price">₹{{ item.price }}</div>
                             <div class="quantity-selector">
                                 <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, -1)">−</button>
-                                <input type="number" id="qty-{{ item.id }}" value="1" min="1" max="20" style="width: 50px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 4px;">
+                                <input type="number" id="qty-{{ item.id }}" value="{{ row.cart_quantity }}" min="1" max="20" style="width: 50px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 4px;">
                                 <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, 1)">+</button>
                             </div>
                         </div>
@@ -176,6 +206,7 @@ function updateQty(itemId, change) {
                     </div>
                 </div>
             </div>
+            {% endwith %}
         {% endfor %}
     </div>
 {% else %}

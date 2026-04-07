@@ -92,11 +92,15 @@
                     </div>
                     <div class="order-info-item">
                         <span>Preparation:</span>
-                        <span class="badge bg-info">{{ order.get_vendor_status_display }}</span>
+                        <span class="badge {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' %}bg-danger{% else %}bg-info{% endif %}">
+                            {% if order.payment_status == 'FAILED' %}Not started{% else %}{{ order.get_vendor_status_display }}{% endif %}
+                        </span>
                     </div>
                     <div class="order-info-item">
                         <span>Delivery:</span>
-                        <span class="badge bg-warning">{{ order.get_delivery_status_display }}</span>
+                        <span class="badge {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}bg-secondary{% else %}bg-warning{% endif %}">
+                            {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}Not applicable{% else %}{{ order.get_delivery_status_display }}{% endif %}
+                        </span>
                     </div>
                 </div>
                 
@@ -107,7 +111,7 @@
                 {% endif %}
                 
                 <a href="{% url 'student_order_detail' order.id %}" class="btn btn-primary btn-sm">
-                    View Details & Track Delivery
+                    {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}View Details{% else %}View Details & Track Delivery{% endif %}
                 </a>
             </div>
         </div>
