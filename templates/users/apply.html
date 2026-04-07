@@ -30,13 +30,31 @@
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Email</label>
-                    <input type="email" name="email" class="form-control" required>
+                    <div class="input-group">
+                        <input type="email" name="email" id="email" class="form-control" required>
+                        <button type="button" class="btn btn-outline-primary" onclick="sendOtp('EMAIL')">Send Email OTP</button>
+                    </div>
+                    <div class="form-text">Use your IITK email address.</div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Phone</label>
-                    <input type="tel" name="phone" class="form-control"
-                           pattern="[0-9]{10}" maxlength="10" required>
+                    <div class="input-group">
+                        <input type="tel" name="phone" id="phone" class="form-control"
+                               pattern="[0-9]{10}" maxlength="10" required>
+                        <button type="button" class="btn btn-outline-primary" onclick="sendOtp('PHONE')">Send Mobile OTP</button>
+                    </div>
                 </div>
+                <div class="mb-3">
+                    <label class="form-label">Email OTP</label>
+                    <input type="text" name="email_otp" class="form-control"
+                           pattern="[0-9]{6}" maxlength="6" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Mobile OTP</label>
+                    <input type="text" name="phone_otp" class="form-control"
+                           pattern="[0-9]{6}" maxlength="6" required>
+                </div>
+                <div id="otp-status" class="small mb-3"></div>
                 <div class="mb-3">
                     <label class="form-label">Aadhaar Number</label>
                     <input type="text" name="aadhaar_number" class="form-control"
@@ -141,6 +159,41 @@
 
 {% block extra_js %}
 <script>
+    function getCsrfToken() {
+        return document.querySelector('[name=csrfmiddlewaretoken]').value
+    }
+
+    function setOtpStatus(message, isError) {
+        const status = document.getElementById('otp-status')
+        status.textContent = message
+        status.className = isError ? 'small mb-3 text-danger' : 'small mb-3 text-success'
+    }
+
+    function sendOtp(channel) {
+        const role = document.getElementById('role_select').value
+        if (!role) {
+            setOtpStatus('Please select Vendor or Delivery Personnel first.', true)
+            return
+        }
+
+        const form = new FormData()
+        form.append('purpose', 'STAFF_APPLICATION')
+        form.append('channel', channel)
+        form.append('email', document.getElementById('email').value)
+        form.append('phone', document.getElementById('phone').value)
+
+        fetch('{% url "send_registration_otp" %}', {
+            method: 'POST',
+            headers: {'X-CSRFToken': getCsrfToken()},
+            body: form
+        })
+        .then(response => response.json().then(data => ({ok: response.ok, data})))
+        .then(({ok, data}) => {
+            setOtpStatus(ok && data.success ? data.message : data.error, !(ok && data.success))
+        })
+        .catch(() => setOtpStatus('Could not send OTP. Please try again.', true))
+    }
+
     // show/hide vendor or delivery fields based on role selection
     document.getElementById('role_select').addEventListener('change', function() {
         document.getElementById('vendor_fields').style.display   = 'none'

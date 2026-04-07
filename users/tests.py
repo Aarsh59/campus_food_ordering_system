@@ -9,8 +9,9 @@ from unittest.mock import patch
 from .models import (
     User, StaffApplication, VendorProfile, MenuItem, Order, OrderItem,
     Notification, Cart, CartItem, Payment, DeliveryAssignment,
-    DeliveryBroadcast, DeliveryBroadcastResponse, OrderTracking
+    DeliveryBroadcast, DeliveryBroadcastResponse, OrderTracking, ContactOTP
 )
+from .otp_utils import issue_otp
 
 
 # ─── Model Tests ──────────────────────────────────────────────────────────────
@@ -72,6 +73,14 @@ class RegisterViewTest(TestCase):
         self.client = Client()
         self.url = reverse('register')
 
+    def _otp_fields(self, email='newstudent@iitk.ac.in', phone='9876543210'):
+        _, email_otp = issue_otp(ContactOTP.Purpose.STUDENT_REGISTER, ContactOTP.Channel.EMAIL, email)
+        _, phone_otp = issue_otp(ContactOTP.Purpose.STUDENT_REGISTER, ContactOTP.Channel.PHONE, phone)
+        return {
+            'email_otp': email_otp,
+            'phone_otp': phone_otp,
+        }
+
     def test_register_page_loads(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
@@ -84,6 +93,7 @@ class RegisterViewTest(TestCase):
             'phone'     : '9876543210',
             'password1' : 'Campus@1234',
             'password2' : 'Campus@1234',
+            **self._otp_fields(),
         })
         self.assertRedirects(response, reverse('login'))
         self.assertTrue(User.objects.filter(username='newstudent').exists())
@@ -95,6 +105,7 @@ class RegisterViewTest(TestCase):
             'phone'     : '9876543210',
             'password1' : 'Campus@1234',
             'password2' : 'Campus@1234',
+            **self._otp_fields(email='specialuser@iitk.ac.in'),
         })
         self.assertRedirects(response, reverse('login'))
         self.assertTrue(User.objects.filter(username='new.student+test@iitk_1').exists())
@@ -182,6 +193,33 @@ class RegisterViewTest(TestCase):
         })
         self.assertEqual(response.status_code, 200)
         self.assertEqual(User.objects.filter(email='existing@iitk.ac.in').count(), 1)
+
+    def test_send_registration_email_otp_rejects_non_iitk_email(self):
+        response = self.client.post(reverse('send_registration_otp'), {
+            'purpose': ContactOTP.Purpose.STUDENT_REGISTER,
+            'channel': ContactOTP.Channel.EMAIL,
+            'email': 'student@gmail.com',
+            'phone': '9876543210',
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()['success'])
+
+    def test_send_registration_phone_otp_creates_otp(self):
+        response = self.client.post(reverse('send_registration_otp'), {
+            'purpose': ContactOTP.Purpose.STUDENT_REGISTER,
+            'channel': ContactOTP.Channel.PHONE,
+            'email': 'student@iitk.ac.in',
+            'phone': '9876543210',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['success'])
+        self.assertTrue(ContactOTP.objects.filter(
+            purpose=ContactOTP.Purpose.STUDENT_REGISTER,
+            channel=ContactOTP.Channel.PHONE,
+            target='9876543210',
+        ).exists())
 
 
 # ─── Login Tests ──────────────────────────────────────────────────────────────
@@ -281,6 +319,14 @@ class StaffApplicationTest(TestCase):
         self.client = Client()
         self.url = reverse('apply')
 
+    def _otp_fields(self, email, phone='9876543210'):
+        _, email_otp = issue_otp(ContactOTP.Purpose.STAFF_APPLICATION, ContactOTP.Channel.EMAIL, email)
+        _, phone_otp = issue_otp(ContactOTP.Purpose.STAFF_APPLICATION, ContactOTP.Channel.PHONE, phone)
+        return {
+            'email_otp': email_otp,
+            'phone_otp': phone_otp,
+        }
+
     def test_apply_page_loads(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
@@ -290,7 +336,7 @@ class StaffApplicationTest(TestCase):
         response = self.client.post(self.url, {
             'role_applied'   : 'VENDOR',
             'full_name'      : 'Test Vendor',
-            'email'          : 'vendor@test.com',
+            'email'          : 'vendor@iitk.ac.in',
             'phone'          : '9876543210',
             'aadhaar_number' : '123456789012',
             'outlet_name'    : 'Test Outlet',
@@ -298,32 +344,34 @@ class StaffApplicationTest(TestCase):
             'cuisine_type'   : 'Fast Food',
             'operating_hours': '9AM - 9PM',
             'fssai_license'  : '12345678901234',
+            **self._otp_fields(email='vendor@iitk.ac.in'),
         })
         self.assertRedirects(response, reverse('pending'))
         self.assertTrue(
-            StaffApplication.objects.filter(email='vendor@test.com').exists()
+            StaffApplication.objects.filter(email='vendor@iitk.ac.in').exists()
         )
 
     def test_delivery_application_submission(self):
         response = self.client.post(self.url, {
             'role_applied'    : 'DELIVERY',
             'full_name'       : 'Test Delivery',
-            'email'           : 'delivery@test.com',
+            'email'           : 'delivery@iitk.ac.in',
             'phone'           : '9876543210',
             'aadhaar_number'  : '123456789012',
             'vehicle_type'    : 'Motorcycle',
             'vehicle_number'  : 'UP32AB1234',
             'driving_license' : 'DL123456789',
+            **self._otp_fields(email='delivery@iitk.ac.in'),
         })
         self.assertRedirects(response, reverse('pending'))
         self.assertTrue(
-            StaffApplication.objects.filter(email='delivery@test.com').exists()
+            StaffApplication.objects.filter(email='delivery@iitk.ac.in').exists()
         )
 
     def test_duplicate_application_rejected(self):
         StaffApplication.objects.create(
             full_name      = 'Test Vendor',
-            email          = 'vendor@test.com',
+            email          = 'vendor@iitk.ac.in',
             phone          = '9876543210',
             role_applied   = 'VENDOR',
             aadhaar_number = '123456789012',
@@ -331,13 +379,13 @@ class StaffApplicationTest(TestCase):
         response = self.client.post(self.url, {
             'role_applied'   : 'VENDOR',
             'full_name'      : 'Test Vendor',
-            'email'          : 'vendor@test.com',
+            'email'          : 'vendor@iitk.ac.in',
             'phone'          : '9876543210',
             'aadhaar_number' : '123456789012',
         })
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            StaffApplication.objects.filter(email='vendor@test.com').count(), 1
+            StaffApplication.objects.filter(email='vendor@iitk.ac.in').count(), 1
         )
 
 

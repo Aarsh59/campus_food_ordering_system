@@ -23,9 +23,18 @@ from .models import (
     DeliveryBroadcast,
     DeliveryBroadcastResponse,
     OrderTracking,
+    ContactOTP,
 )
 from .username_validation import USERNAME_ALLOWED_DESCRIPTION, is_valid_username
 from .email_utils import send_app_email
+from .otp_utils import (
+    is_allowed_email_domain,
+    is_valid_phone,
+    normalize_email,
+    normalize_phone,
+    send_otp,
+    verify_otp,
+)
 
 import json
 import urllib.parse
@@ -108,11 +117,69 @@ def _reverse_geocode_lat_lng(lat: float, lng: float) -> tuple[str, str]:
 
 
 # ─── Register (Students Only) ─────────────────────────────────────────────────
+@require_http_methods(["POST"])
+def send_registration_otp(request):
+    """Send OTP for student registration or staff application contact verification."""
+    purpose = request.POST.get('purpose')
+    channel = request.POST.get('channel')
+    email = normalize_email(request.POST.get('email'))
+    phone = normalize_phone(request.POST.get('phone'))
+
+    if purpose not in ContactOTP.Purpose.values:
+        return JsonResponse({'success': False, 'error': 'Invalid OTP purpose'}, status=400)
+
+    if channel not in ContactOTP.Channel.values:
+        return JsonResponse({'success': False, 'error': 'Invalid OTP channel'}, status=400)
+
+    if channel == ContactOTP.Channel.EMAIL:
+        if not is_allowed_email_domain(email):
+            return JsonResponse({
+                'success': False,
+                'error': f'Only {settings.ALLOWED_EMAIL_DOMAIN} emails are allowed',
+            }, status=400)
+        if purpose == ContactOTP.Purpose.STUDENT_REGISTER and User.objects.filter(email=email).exists():
+            return JsonResponse({'success': False, 'error': 'Email already registered'}, status=400)
+        if purpose == ContactOTP.Purpose.STAFF_APPLICATION and StaffApplication.objects.filter(email=email).exists():
+            return JsonResponse({'success': False, 'error': 'An application with this email already exists'}, status=400)
+        sent = send_otp(purpose, channel, email)
+        return JsonResponse({
+            'success': sent,
+            'message': 'Email OTP sent. Please check your inbox.',
+            'error': '' if sent else 'Could not send email OTP. Please try again.',
+        }, status=200 if sent else 500)
+
+    if not is_valid_phone(phone):
+        return JsonResponse({'success': False, 'error': 'Enter a valid 10 digit mobile number'}, status=400)
+
+    sent = send_otp(purpose, channel, phone)
+    return JsonResponse({
+        'success': sent,
+        'message': 'Mobile OTP sent. Please check your phone.',
+        'error': '' if sent else 'Could not send mobile OTP. SMS provider is not configured or failed.',
+    }, status=200 if sent else 500)
+
+
+def _contact_otps_are_valid(request, purpose: str, email: str, phone: str) -> bool:
+    email_otp = request.POST.get('email_otp')
+    phone_otp = request.POST.get('phone_otp')
+
+    email_verified = verify_otp(purpose, ContactOTP.Channel.EMAIL, email, email_otp, consume=False)
+    phone_verified = verify_otp(purpose, ContactOTP.Channel.PHONE, phone, phone_otp, consume=False)
+
+    if not email_verified or not phone_verified:
+        messages.error(request, 'Please enter the correct email and mobile OTPs before submitting.')
+        return False
+
+    verify_otp(purpose, ContactOTP.Channel.EMAIL, email, email_otp)
+    verify_otp(purpose, ContactOTP.Channel.PHONE, phone, phone_otp)
+    return True
+
+
 def register_view(request):
     if request.method == 'POST':
         username   = (request.POST.get('username') or '').strip()
-        email      = (request.POST.get('email') or '').strip().lower()
-        phone      = request.POST.get('phone')
+        email      = normalize_email(request.POST.get('email'))
+        phone      = normalize_phone(request.POST.get('phone'))
         password1  = request.POST.get('password1')
         password2  = request.POST.get('password2')
 
@@ -125,8 +192,12 @@ def register_view(request):
             messages.error(request, f'Username can contain {USERNAME_ALLOWED_DESCRIPTION}')
             return render(request, 'users/register.html')
 
-        if not email.endswith(settings.ALLOWED_EMAIL_DOMAIN):
+        if not is_allowed_email_domain(email):
             messages.error(request, f'Only {settings.ALLOWED_EMAIL_DOMAIN} emails are allowed')
+            return render(request, 'users/register.html')
+
+        if not is_valid_phone(phone):
+            messages.error(request, 'Enter a valid 10 digit mobile number')
             return render(request, 'users/register.html')
 
         if User.objects.filter(username__iexact=username).exists():
@@ -135,6 +206,9 @@ def register_view(request):
 
         if User.objects.filter(email=email).exists():
             messages.error(request, 'Email already registered')
+            return render(request, 'users/register.html')
+
+        if not _contact_otps_are_valid(request, ContactOTP.Purpose.STUDENT_REGISTER, email, phone):
             return render(request, 'users/register.html')
 
         # create user
@@ -188,15 +262,36 @@ def logout_view(request):
 def apply_view(request):
     if request.method == 'POST':
         role_applied = request.POST.get('role_applied')
+        email = normalize_email(request.POST.get('email'))
+        phone = normalize_phone(request.POST.get('phone'))
 
-        if StaffApplication.objects.filter(email=request.POST.get('email')).exists():
+        if role_applied not in StaffApplication.Role.values:
+            messages.error(request, 'Please select a valid role')
+            return render(request, 'users/apply.html')
+
+        if not is_allowed_email_domain(email):
+            messages.error(request, f'Only {settings.ALLOWED_EMAIL_DOMAIN} emails are allowed')
+            return render(request, 'users/apply.html')
+
+        if not is_valid_phone(phone):
+            messages.error(request, 'Enter a valid 10 digit mobile number')
+            return render(request, 'users/apply.html')
+
+        if StaffApplication.objects.filter(email=email).exists():
             messages.error(request, 'An application with this email already exists')
+            return render(request, 'users/apply.html')
+
+        if User.objects.filter(email=email).exists():
+            messages.error(request, 'A user with this email already exists')
+            return render(request, 'users/apply.html')
+
+        if not _contact_otps_are_valid(request, ContactOTP.Purpose.STAFF_APPLICATION, email, phone):
             return render(request, 'users/apply.html')
 
         application = StaffApplication(
             full_name        = request.POST.get('full_name'),
-            email            = request.POST.get('email'),
-            phone            = request.POST.get('phone'),
+            email            = email,
+            phone            = phone,
             role_applied     = role_applied,
             aadhaar_number   = request.POST.get('aadhaar_number'),
             aadhaar_document = request.FILES.get('aadhaar_document'),

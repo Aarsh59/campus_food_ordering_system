@@ -10,6 +10,7 @@ from .models import (
     Order,
     OrderItem,
     Notification,
+    ContactOTP,
 )
 
 @admin.register(User)
@@ -60,3 +61,11 @@ class NotificationAdmin(admin.ModelAdmin):
     list_display = ['recipient', 'notification_type', 'created_at', 'is_read']
     list_filter = ['notification_type', 'is_read']
     search_fields = ['recipient__username', 'message']
+
+
+@admin.register(ContactOTP)
+class ContactOTPAdmin(admin.ModelAdmin):
+    list_display = ['purpose', 'channel', 'target', 'attempts', 'created_at', 'expires_at', 'verified_at']
+    list_filter = ['purpose', 'channel', 'verified_at']
+    search_fields = ['target']
+    readonly_fields = ['created_at', 'last_sent_at', 'expires_at', 'verified_at']

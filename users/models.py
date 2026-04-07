@@ -97,6 +97,37 @@ class StaffApplication(models.Model):
         return f"{self.full_name} - {self.role_applied} ({self.status})"
 
 
+class ContactOTP(models.Model):
+    class Purpose(models.TextChoices):
+        STUDENT_REGISTER = 'STUDENT_REGISTER', 'Student registration'
+        STAFF_APPLICATION = 'STAFF_APPLICATION', 'Staff application'
+
+    class Channel(models.TextChoices):
+        EMAIL = 'EMAIL', 'Email'
+        PHONE = 'PHONE', 'Phone'
+
+    purpose = models.CharField(max_length=30, choices=Purpose.choices)
+    channel = models.CharField(max_length=10, choices=Channel.choices)
+    target = models.CharField(max_length=254, db_index=True)
+    code_hash = models.CharField(max_length=128)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_sent_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+    verified_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['purpose', 'channel', 'target', '-created_at']),
+        ]
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def __str__(self):
+        return f"{self.purpose} {self.channel} OTP for {self.target}"
+
+
 class VendorProfile(models.Model):
     """
     Vendor-specific profile created after application approval.
