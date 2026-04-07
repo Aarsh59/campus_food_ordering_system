@@ -64,6 +64,7 @@ class ResendEmailBackend(BaseEmailBackend):
             headers={
                 'Authorization': f'Bearer {api_key}',
                 'Content-Type': 'application/json',
+                'User-Agent': 'campus-food-ordering-system/1.0',
             },
             method='POST',
         )
