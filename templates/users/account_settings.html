@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% block title %}Account Settings{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card mb-4">
+            <div class="card-body p-4">
+                <h2 class="mb-2">Account Settings</h2>
+                <p class="text-muted mb-4">
+                    Manage your password and decide whether to keep this account in the system.
+                </p>
+
+                <div class="d-flex flex-wrap gap-2 mb-4">
+                    <a href="{% url 'change_password' %}" class="btn btn-primary">Change Password</a>
+                    <a href="{% url dashboard_route_name %}" class="btn btn-outline-secondary">Back to Dashboard</a>
+                </div>
+
+                <div class="border rounded p-4 bg-light">
+                    <h4 class="text-danger mb-3">Delete Account</h4>
+                    <p class="mb-2">
+                        Deleting your account permanently removes your login and frees your email address for a fresh registration or role switch later.
+                    </p>
+                    <p class="mb-3">
+                        This action cannot be undone.
+                    </p>
+
+                    {% if deletion_blocker %}
+                        <div class="alert alert-warning mb-0">
+                            {{ deletion_blocker }}
+                        </div>
+                    {% else %}
+                        <form method="post" action="{% url 'delete_account' %}">
+                            {% csrf_token %}
+                            <label for="deleteConfirmation" class="form-label">
+                                Type <strong>DELETE</strong> to confirm
+                            </label>
+                            <input
+                                type="text"
+                                id="deleteConfirmation"
+                                name="confirmation"
+                                class="form-control mb-3"
+                                placeholder="DELETE"
+                                required
+                            >
+                            <button type="submit" class="btn btn-danger">
+                                Permanently Delete My Account
+                            </button>
+                        </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

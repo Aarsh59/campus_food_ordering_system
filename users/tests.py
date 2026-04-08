@@ -2128,3 +2128,171 @@ class EndToEndOrderingTest(TestCase):
         self.assertEqual(order.payment_status, Order.PaymentStatus.COMPLETED)
         self.assertEqual(payment.status, Payment.PaymentStatus.SUCCESS)
         self.assertEqual(CartItem.objects.filter(cart__student=self.student).count(), 0)
+
+
+class AccountDeletionTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_student_can_delete_account_when_no_active_orders(self):
+        User.objects.create_user(
+            username='delete_student',
+            email='delete_student@iitk.ac.in',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT,
+        )
+        ContactOTP.objects.create(
+            purpose=ContactOTP.Purpose.STUDENT_REGISTER,
+            channel=ContactOTP.Channel.EMAIL,
+            target='delete_student@iitk.ac.in',
+            code_hash='hash',
+            expires_at=timezone.now() + timedelta(minutes=5),
+        )
+
+        self.client.login(username='delete_student', password='Test@1234')
+        response = self.client.post(
+            reverse('delete_account'),
+            {'confirmation': 'DELETE'},
+            follow=True,
+        )
+
+        self.assertRedirects(response, reverse('login'))
+        self.assertFalse(User.objects.filter(email='delete_student@iitk.ac.in').exists())
+        self.assertFalse(ContactOTP.objects.filter(target='delete_student@iitk.ac.in').exists())
+
+        recreated_user = User.objects.create_user(
+            username='delete_student_again',
+            email='delete_student@iitk.ac.in',
+            password='Test@1234',
+            phone='8888888888',
+            role=User.Role.STUDENT,
+        )
+        self.assertEqual(recreated_user.email, 'delete_student@iitk.ac.in')
+
+    def test_student_cannot_delete_account_with_active_order(self):
+        student = User.objects.create_user(
+            username='active_student',
+            email='active_student@iitk.ac.in',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT,
+        )
+        vendor = User.objects.create_user(
+            username='active_vendor',
+            email='active_vendor@iitk.ac.in',
+            password='Test@1234',
+            phone='9999999998',
+            role=User.Role.VENDOR,
+        )
+        vendor_profile = VendorProfile.objects.create(user=vendor, outlet_name='Campus Cafe')
+        Order.objects.create(
+            student=student,
+            vendor=vendor_profile,
+            total_amount=Decimal('120.00'),
+            payment_status=Order.PaymentStatus.COMPLETED,
+            vendor_decision=Order.VendorDecision.ACCEPTED,
+            vendor_status=Order.VendorStatus.PREPARING,
+        )
+
+        self.client.login(username='active_student', password='Test@1234')
+        response = self.client.post(
+            reverse('delete_account'),
+            {'confirmation': 'DELETE'},
+            follow=True,
+        )
+
+        self.assertRedirects(response, reverse('account_settings'))
+        self.assertTrue(User.objects.filter(email='active_student@iitk.ac.in').exists())
+        self.assertContains(response, 'You still have active orders.')
+
+    def test_vendor_deletion_clears_existing_application_record(self):
+        vendor = User.objects.create_user(
+            username='switch_vendor',
+            email='switch_vendor@iitk.ac.in',
+            password='Test@1234',
+            phone='9999999997',
+            role=User.Role.VENDOR,
+        )
+        VendorProfile.objects.create(user=vendor, outlet_name='Role Switch Outlet')
+        StaffApplication.objects.create(
+            full_name='Switch Vendor',
+            email='switch_vendor@iitk.ac.in',
+            phone='9999999997',
+            role_applied=StaffApplication.Role.VENDOR,
+            aadhaar_number='123412341234',
+            status=StaffApplication.Status.APPROVED,
+        )
+
+        self.client.login(username='switch_vendor', password='Test@1234')
+        response = self.client.post(
+            reverse('delete_account'),
+            {'confirmation': 'DELETE'},
+            follow=True,
+        )
+
+        self.assertRedirects(response, reverse('login'))
+        self.assertFalse(User.objects.filter(email='switch_vendor@iitk.ac.in').exists())
+        self.assertFalse(StaffApplication.objects.filter(email='switch_vendor@iitk.ac.in').exists())
+
+        StaffApplication.objects.create(
+            full_name='Switch Again',
+            email='switch_vendor@iitk.ac.in',
+            phone='9999999996',
+            role_applied=StaffApplication.Role.DELIVERY,
+            aadhaar_number='111122223333',
+            status=StaffApplication.Status.PENDING,
+        )
+        self.assertEqual(
+            StaffApplication.objects.filter(email='switch_vendor@iitk.ac.in').count(),
+            1,
+        )
+
+    def test_delivery_cannot_delete_account_with_active_assignment(self):
+        delivery_user = User.objects.create_user(
+            username='active_delivery',
+            email='active_delivery@iitk.ac.in',
+            password='Test@1234',
+            phone='9999999995',
+            role=User.Role.DELIVERY,
+        )
+        vendor = User.objects.create_user(
+            username='delivery_vendor',
+            email='delivery_vendor@iitk.ac.in',
+            password='Test@1234',
+            phone='9999999994',
+            role=User.Role.VENDOR,
+        )
+        student = User.objects.create_user(
+            username='delivery_student',
+            email='delivery_student@iitk.ac.in',
+            password='Test@1234',
+            phone='9999999993',
+            role=User.Role.STUDENT,
+        )
+        vendor_profile = VendorProfile.objects.create(user=vendor, outlet_name='Delivery Outlet')
+        order = Order.objects.create(
+            student=student,
+            vendor=vendor_profile,
+            total_amount=Decimal('99.00'),
+            payment_status=Order.PaymentStatus.COMPLETED,
+            vendor_decision=Order.VendorDecision.ACCEPTED,
+            vendor_status=Order.VendorStatus.READY,
+        )
+        DeliveryAssignment.objects.create(
+            order=order,
+            delivery_partner=delivery_user,
+            status=DeliveryAssignment.AssignmentStatus.ACCEPTED,
+        )
+
+        self.client.login(username='active_delivery', password='Test@1234')
+        response = self.client.post(
+            reverse('delete_account'),
+            {'confirmation': 'DELETE'},
+            follow=True,
+        )
+
+        self.assertRedirects(response, reverse('account_settings'))
+        self.assertTrue(User.objects.filter(email='active_delivery@iitk.ac.in').exists())
+        self.assertContains(response, 'You still have an active delivery assignment.')

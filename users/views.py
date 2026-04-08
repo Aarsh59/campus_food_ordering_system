@@ -73,6 +73,100 @@ def _dashboard_route_name_for_user(user):
     return 'login'
 
 
+def _delete_file_field(field_file):
+    if field_file and getattr(field_file, 'name', ''):
+        field_file.delete(save=False)
+
+
+def _collect_staff_application_files(applications):
+    file_fields = []
+    for application in applications:
+        for field_name in [
+            'aadhaar_document',
+            'fssai_document',
+            'college_noc',
+            'driving_license_document',
+        ]:
+            field_file = getattr(application, field_name, None)
+            if field_file and getattr(field_file, 'name', ''):
+                file_fields.append(field_file)
+    return file_fields
+
+
+def _collect_vendor_menu_files(user):
+    vendor_profile = VendorProfile.objects.filter(user=user).first()
+    if not vendor_profile:
+        return []
+    return [
+        item.photo
+        for item in vendor_profile.menu_items.all()
+        if item.photo and getattr(item.photo, 'name', '')
+    ]
+
+
+def _get_account_deletion_blocker(user):
+    if user.role == User.Role.STUDENT:
+        has_active_orders = Order.objects.filter(student=user).exclude(
+            Q(payment_status=Order.PaymentStatus.FAILED)
+            | Q(vendor_decision=Order.VendorDecision.REJECTED)
+            | Q(vendor_status=Order.VendorStatus.CANCELLED)
+            | Q(delivery_status=Order.DeliveryStatus.DELIVERED)
+        ).exists()
+        if has_active_orders:
+            return (
+                'You still have active orders. Please wait for them to finish '
+                'or be cancelled before deleting your account.'
+            )
+
+    if user.role == User.Role.VENDOR:
+        vendor_profile = VendorProfile.objects.filter(user=user).first()
+        if vendor_profile:
+            has_active_orders = Order.objects.filter(vendor=vendor_profile).exclude(
+                Q(vendor_decision=Order.VendorDecision.REJECTED)
+                | Q(vendor_status=Order.VendorStatus.CANCELLED)
+                | Q(delivery_status=Order.DeliveryStatus.DELIVERED)
+            ).exists()
+            if has_active_orders:
+                return (
+                    'You still have active vendor orders. Complete or cancel them '
+                    'before deleting your account.'
+                )
+
+    if user.role == User.Role.DELIVERY:
+        has_active_assignments = DeliveryAssignment.objects.filter(
+            delivery_partner=user,
+            status__in=[
+                DeliveryAssignment.AssignmentStatus.ACCEPTED,
+                DeliveryAssignment.AssignmentStatus.PICKED_UP,
+                DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY,
+            ],
+        ).exists()
+        if has_active_assignments:
+            return (
+                'You still have an active delivery assignment. Complete it before '
+                'deleting your account.'
+            )
+
+    return ''
+
+
+def _delete_user_account_data(user):
+    staff_applications = list(StaffApplication.objects.filter(email=user.email))
+    uploaded_files = _collect_staff_application_files(staff_applications)
+    uploaded_files.extend(_collect_vendor_menu_files(user))
+
+    ContactOTP.objects.filter(
+        Q(target=normalize_email(user.email)) | Q(target=normalize_phone(user.phone))
+    ).delete()
+
+    StaffApplication.objects.filter(id__in=[application.id for application in staff_applications]).delete()
+    user.delete()
+
+    # Remove uploaded files after database rows are gone.
+    for field_file in uploaded_files:
+        _delete_file_field(field_file)
+
+
 def _parse_cart_quantity(raw_quantity, *, allow_zero=False):
     """Parse and validate a cart quantity sent by the client."""
     try:
@@ -385,6 +479,43 @@ def login_view(request):
 # ─── Logout ───────────────────────────────────────────────────────────────────
 def logout_view(request):
     logout(request)
+    return redirect('login')
+
+
+@login_required
+def account_settings(request):
+    deletion_blocker = _get_account_deletion_blocker(request.user)
+    return render(
+        request,
+        'users/account_settings.html',
+        {
+            'deletion_blocker': deletion_blocker,
+            'dashboard_route_name': _dashboard_route_name_for_user(request.user),
+        },
+    )
+
+
+@login_required
+@require_http_methods(["POST"])
+def delete_account(request):
+    confirmation = (request.POST.get('confirmation') or '').strip()
+    if confirmation != 'DELETE':
+        messages.error(request, 'Type DELETE to confirm account deletion.')
+        return redirect('account_settings')
+
+    deletion_blocker = _get_account_deletion_blocker(request.user)
+    if deletion_blocker:
+        messages.error(request, deletion_blocker)
+        return redirect('account_settings')
+
+    with transaction.atomic():
+        _delete_user_account_data(request.user)
+
+    logout(request)
+    messages.success(
+        request,
+        'Your account has been deleted. You can now register or apply again with the same email address.',
+    )
     return redirect('login')
 
 

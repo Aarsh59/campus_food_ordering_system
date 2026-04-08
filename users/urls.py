@@ -6,6 +6,8 @@ urlpatterns = [
     path('otp/send/',          views.send_registration_otp, name='send_registration_otp'),
     path('login/',             views.login_view,         name='login'),
     path('logout/',            views.logout_view,        name='logout'),
+    path('account/settings/',  views.account_settings,   name='account_settings'),
+    path('account/delete/',    views.delete_account,     name='delete_account'),
     path('apply/',             views.apply_view,         name='apply'),
     path('pending/',           views.pending_view,       name='pending'),
     
