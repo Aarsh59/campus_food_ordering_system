@@ -45,6 +45,42 @@ from datetime import timedelta
 from django.db.models import Q
 
 
+IITK_CAMPUS_BOUNDS = {
+    'north': 26.5278,
+    'south': 26.4942,
+    'east': 80.2585,
+    'west': 80.2240,
+}
+IITK_CAMPUS_CENTER = {
+    'lat': 26.5124,
+    'lng': 80.2329,
+}
+IITK_CAMPUS_LANDMARKS = [
+    {'name': 'Hall 1, IIT Kanpur', 'lat': 26.5055, 'lng': 80.2336, 'aliases': ['hall 1', 'h1']},
+    {'name': 'Hall 2, IIT Kanpur', 'lat': 26.5049, 'lng': 80.2354, 'aliases': ['hall 2', 'h2']},
+    {'name': 'Hall 3, IIT Kanpur', 'lat': 26.5054, 'lng': 80.2371, 'aliases': ['hall 3', 'h3']},
+    {'name': 'Hall 4, IIT Kanpur', 'lat': 26.5051, 'lng': 80.2388, 'aliases': ['hall 4', 'h4']},
+    {'name': 'Hall 5, IIT Kanpur', 'lat': 26.5071, 'lng': 80.2363, 'aliases': ['hall 5', 'h5']},
+    {'name': 'Hall 6, IIT Kanpur', 'lat': 26.5078, 'lng': 80.2382, 'aliases': ['hall 6', 'h6']},
+    {'name': 'Hall 7, IIT Kanpur', 'lat': 26.5096, 'lng': 80.2354, 'aliases': ['hall 7', 'h7']},
+    {'name': 'Hall 8, IIT Kanpur', 'lat': 26.5101, 'lng': 80.2372, 'aliases': ['hall 8', 'h8']},
+    {'name': 'Hall 9, IIT Kanpur', 'lat': 26.5118, 'lng': 80.2346, 'aliases': ['hall 9', 'h9']},
+    {'name': 'Hall 10, IIT Kanpur', 'lat': 26.5122, 'lng': 80.2366, 'aliases': ['hall 10', 'h10']},
+    {'name': 'Hall 11, IIT Kanpur', 'lat': 26.5139, 'lng': 80.2335, 'aliases': ['hall 11', 'h11']},
+    {'name': 'Hall 12, IIT Kanpur', 'lat': 26.5146, 'lng': 80.2355, 'aliases': ['hall 12', 'h12']},
+    {'name': 'Hall 13, IIT Kanpur', 'lat': 26.5160, 'lng': 80.2372, 'aliases': ['hall 13', 'h13']},
+    {'name': 'Lecture Hall Complex, IIT Kanpur', 'lat': 26.5129, 'lng': 80.2307, 'aliases': ['lhc', 'lecture hall complex']},
+    {'name': 'Students Activity Centre, IIT Kanpur', 'lat': 26.5089, 'lng': 80.2310, 'aliases': ['sac', 'student activity centre', 'students activity centre']},
+    {'name': 'PK Kelkar Library, IIT Kanpur', 'lat': 26.5122, 'lng': 80.2291, 'aliases': ['library', 'kelkar library', 'pk kelkar library']},
+    {'name': 'Main Building, IIT Kanpur', 'lat': 26.5120, 'lng': 80.2320, 'aliases': ['main building']},
+    {'name': 'Main Gate, IIT Kanpur', 'lat': 26.4999, 'lng': 80.2330, 'aliases': ['main gate']},
+    {'name': 'Health Centre, IIT Kanpur', 'lat': 26.5108, 'lng': 80.2279, 'aliases': ['health centre', 'hospital']},
+    {'name': 'Visitors Hostel, IIT Kanpur', 'lat': 26.5018, 'lng': 80.2315, 'aliases': ['visitors hostel', 'vh']},
+    {'name': 'Shopping Centre, IIT Kanpur', 'lat': 26.5072, 'lng': 80.2300, 'aliases': ['shopping centre', 'shop c']},
+    {'name': 'Open Air Theatre, IIT Kanpur', 'lat': 26.5099, 'lng': 80.2322, 'aliases': ['oat', 'open air theatre']},
+]
+
+
 def _format_retry_after_message(retry_after_seconds: int) -> str:
     if retry_after_seconds <= 1:
         return 'Please wait 1 second before requesting another OTP.'
@@ -284,7 +320,7 @@ def _generate_google_maps_link_from_address(address: str) -> tuple[str, str]:
     if not api_key:
         raise ValueError("Google Maps API key is not configured")
 
-    query = urllib.parse.urlencode({"address": address, "key": api_key})
+    query = urllib.parse.urlencode({"address": _build_iitk_geocode_query(address), "key": api_key})
     url = f"https://maps.googleapis.com/maps/api/geocode/json?{query}"
 
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
@@ -322,6 +358,9 @@ def _reverse_geocode_lat_lng(lat: float, lng: float) -> tuple[str, str]:
     if not api_key:
         raise ValueError("Google Maps API key is not configured")
 
+    if not _is_within_iitk_campus(lat, lng):
+        raise ValueError("Selected location must be inside the IIT Kanpur campus")
+
     query = urllib.parse.urlencode({"latlng": f"{lat},{lng}", "key": api_key})
     url = f"https://maps.googleapis.com/maps/api/geocode/json?{query}"
 
@@ -342,6 +381,43 @@ def _reverse_geocode_lat_lng(lat: float, lng: float) -> tuple[str, str]:
     formatted_address = results[0].get("formatted_address") or ""
     maps_link = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
     return maps_link, formatted_address
+
+
+def _is_within_iitk_campus(lat: float, lng: float) -> bool:
+    return (
+        IITK_CAMPUS_BOUNDS['south'] <= lat <= IITK_CAMPUS_BOUNDS['north']
+        and IITK_CAMPUS_BOUNDS['west'] <= lng <= IITK_CAMPUS_BOUNDS['east']
+    )
+
+
+def _build_iitk_geocode_query(address: str) -> str:
+    normalized = (address or '').strip()
+    lowered = normalized.lower()
+    if not normalized:
+        return normalized
+    if 'iit kanpur' in lowered or 'indian institute of technology kanpur' in lowered:
+        return normalized
+    return f'{normalized}, IIT Kanpur'
+
+
+def _validate_iitk_location_from_address(address: str) -> tuple[str, str, tuple]:
+    maps_link, formatted_address = _generate_google_maps_link_from_address(address)
+    coords = _parse_google_maps_coordinates(maps_link)
+    if not coords:
+        raise ValueError('Could not determine map coordinates for this location')
+    if not _is_within_iitk_campus(coords[0], coords[1]):
+        raise ValueError('Location must be inside the IIT Kanpur campus')
+    return maps_link, formatted_address, coords
+
+
+def _campus_map_context() -> dict:
+    return {
+        'campus_map_config_json': json.dumps({
+            'bounds': IITK_CAMPUS_BOUNDS,
+            'center': IITK_CAMPUS_CENTER,
+            'landmarks': IITK_CAMPUS_LANDMARKS,
+        }),
+    }
 
 
 # ─── Register (Students Only) ─────────────────────────────────────────────────
@@ -662,6 +738,7 @@ def vendor_dashboard(request):
             'accepted_orders': accepted_orders,
             'menu_items': menu_items,
             'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
+            **_campus_map_context(),
         },
     )
 
@@ -743,9 +820,24 @@ def vendor_update_location(request):
         messages.error(request, 'Please select and save your outlet address on the map before continuing.')
         return redirect('vendor_dashboard')
 
+    coords = _parse_google_maps_coordinates(google_maps_location)
+    if not coords:
+        messages.error(request, 'Your saved outlet map location is invalid. Please select it again on the map.')
+        return redirect('vendor_dashboard')
+
+    if not _is_within_iitk_campus(coords[0], coords[1]):
+        messages.error(request, 'Vendor location must be inside the IIT Kanpur campus.')
+        return redirect('vendor_dashboard')
+
+    try:
+        _, normalized_address = _reverse_geocode_lat_lng(coords[0], coords[1])
+    except Exception as exc:
+        messages.error(request, f'Could not validate the selected outlet location: {exc}')
+        return redirect('vendor_dashboard')
+
     vendor_profile.outlet_name = outlet_name
     vendor_profile.google_maps_location = google_maps_location
-    vendor_profile.google_maps_address = google_maps_address
+    vendor_profile.google_maps_address = normalized_address or google_maps_address
     vendor_profile.save()
 
     messages.success(request, 'Location saved successfully.')
@@ -960,7 +1052,7 @@ def vendor_generate_google_maps_link(request):
     address = request.POST.get('geocode_address', '')
 
     try:
-        maps_link, formatted_address = _generate_google_maps_link_from_address(address)
+        maps_link, formatted_address, _ = _validate_iitk_location_from_address(address)
     except Exception as e:
         messages.error(request, f'Could not generate maps link: {e}')
         return redirect('vendor_dashboard')
@@ -1283,6 +1375,7 @@ def student_checkout(request):
         'delivery_address': delivery_address,
         'razorpay_key': settings.RAZORPAY_KEY_ID,
         'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
+        **_campus_map_context(),
     })
 
 
@@ -1301,6 +1394,11 @@ def student_create_order(request):
     delivery_address = request.POST.get('delivery_address', '').strip()
     if not delivery_address:
         return JsonResponse({'error': 'Delivery address is required'}, status=400)
+
+    try:
+        _, delivery_address, _ = _validate_iitk_location_from_address(delivery_address)
+    except Exception as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
     
     cart_items = list(
         CartItem.objects.filter(cart=cart)

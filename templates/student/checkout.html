@@ -84,6 +84,7 @@
     }
 </style>
 <script>
+const campusMapConfig = {{ campus_map_config_json|safe }};
 const studentCheckoutState = {
     map: null,
     marker: null,
@@ -243,22 +244,52 @@ function cancelPendingPayment(data, reason) {
 function initStudentDeliveryMap() {
     const mapEl = document.getElementById('studentDeliveryMap');
     const addressField = document.getElementById('delivery-address');
-    const searchField = document.getElementById('delivery-address-search');
     const useLocationButton = document.getElementById('use-current-location');
 
     if (!mapEl || !addressField || !window.google) {
         return;
     }
 
-    const defaultCenter = { lat: 26.5106, lng: 80.2461 }; // G66M+W8P, Kalyanpur, Kanpur
+    const defaultCenter = campusMapConfig.center;
+    const campusBounds = new google.maps.LatLngBounds(
+        { lat: campusMapConfig.bounds.south, lng: campusMapConfig.bounds.west },
+        { lat: campusMapConfig.bounds.north, lng: campusMapConfig.bounds.east }
+    );
+
+    function isWithinCampus(lat, lng) {
+        return campusBounds.contains(new google.maps.LatLng(lat, lng));
+    }
+
+    function normalizeLandmarkName(value) {
+        return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    }
+
+    function findCampusLandmark(query) {
+        const normalizedQuery = normalizeLandmarkName(query);
+        if (!normalizedQuery) {
+            return null;
+        }
+
+        return campusMapConfig.landmarks.find((landmark) => {
+            if (normalizeLandmarkName(landmark.name) === normalizedQuery) {
+                return true;
+            }
+            return (landmark.aliases || []).some((alias) => normalizeLandmarkName(alias) === normalizedQuery);
+        }) || null;
+    }
 
     if (!studentCheckoutState.map) {
         studentCheckoutState.map = new google.maps.Map(mapEl, {
             center: defaultCenter,
-            zoom: 15,
+            zoom: 16,
+            minZoom: 15,
             mapTypeControl: false,
             streetViewControl: false,
             fullscreenControl: false,
+            restriction: {
+                latLngBounds: campusBounds,
+                strictBounds: true,
+            },
         });
 
         studentCheckoutState.marker = new google.maps.Marker({
@@ -290,6 +321,11 @@ function initStudentDeliveryMap() {
     }
 
     async function reverseGeocodeAndFill(lat, lng) {
+        if (!isWithinCampus(lat, lng)) {
+            alert('Please choose a location inside the IIT Kanpur campus.');
+            return;
+        }
+
         const res = await fetch('{% url "student_reverse_geocode_location" %}', {
             method: 'POST',
             credentials: 'same-origin',
@@ -310,33 +346,72 @@ function initStudentDeliveryMap() {
     }
 
     function setSelection(lat, lng) {
+        if (!isWithinCampus(lat, lng)) {
+            alert('Please choose a location inside the IIT Kanpur campus.');
+            return false;
+        }
+
         const point = { lat: lat, lng: lng };
         studentCheckoutState.selectedPoint = point;
         marker.setPosition(point);
         map.setCenter(point);
-        map.setZoom(17);
+        map.setZoom(18);
+        return true;
+    }
+
+    function selectLandmark(landmark) {
+        if (!landmark) {
+            return;
+        }
+        if (setSelection(landmark.lat, landmark.lng)) {
+            fillAddress(landmark.name, landmark.lat, landmark.lng);
+        }
+    }
+
+    if (!addressField.dataset.landmarksBound) {
+        const datalist = document.getElementById('iitk-landmarks-list');
+        if (datalist) {
+            datalist.innerHTML = campusMapConfig.landmarks
+                .map((landmark) => `<option value="${landmark.name}"></option>`)
+                .join('');
+        }
+
+        addressField.addEventListener('change', () => {
+            const landmark = findCampusLandmark(addressField.value);
+            if (landmark) {
+                selectLandmark(landmark);
+            }
+        });
+        addressField.dataset.landmarksBound = 'true';
     }
 
     if (!mapEl.dataset.mapListenersBound) {
         map.addListener('click', (e) => {
             const lat = e.latLng.lat();
             const lng = e.latLng.lng();
-            setSelection(lat, lng);
-            reverseGeocodeAndFill(lat, lng);
+            if (setSelection(lat, lng)) {
+                reverseGeocodeAndFill(lat, lng);
+            }
         });
 
         marker.addListener('dragend', (e) => {
             const lat = e.latLng.lat();
             const lng = e.latLng.lng();
-            setSelection(lat, lng);
-            reverseGeocodeAndFill(lat, lng);
+            if (setSelection(lat, lng)) {
+                reverseGeocodeAndFill(lat, lng);
+            } else if (studentCheckoutState.selectedPoint) {
+                marker.setPosition(studentCheckoutState.selectedPoint);
+            }
         });
         mapEl.dataset.mapListenersBound = 'true';
     }
 
-    if (searchField && !searchField.dataset.autocompleteBound) {
-        const autocomplete = new google.maps.places.Autocomplete(searchField, {
-            fields: ['formatted_address', 'geometry', 'name']
+    if (!addressField.dataset.autocompleteBound) {
+        const autocomplete = new google.maps.places.Autocomplete(addressField, {
+            bounds: campusBounds,
+            componentRestrictions: { country: 'in' },
+            fields: ['formatted_address', 'geometry', 'name'],
+            strictBounds: true,
         });
 
         autocomplete.addListener('place_changed', () => {
@@ -347,10 +422,13 @@ function initStudentDeliveryMap() {
 
             const lat = place.geometry.location.lat();
             const lng = place.geometry.location.lng();
-            setSelection(lat, lng);
+            if (!setSelection(lat, lng)) {
+                addressField.value = '';
+                return;
+            }
             fillAddress(place.formatted_address || place.name || '', lat, lng);
         });
-        searchField.dataset.autocompleteBound = 'true';
+        addressField.dataset.autocompleteBound = 'true';
     }
 
     if (useLocationButton && navigator.geolocation && !useLocationButton.dataset.listenerBound) {
@@ -364,7 +442,11 @@ function initStudentDeliveryMap() {
                 async (position) => {
                     const lat = position.coords.latitude;
                     const lng = position.coords.longitude;
-                    setSelection(lat, lng);
+                    if (!setSelection(lat, lng)) {
+                        alert('Your current location appears to be outside the IIT Kanpur campus.');
+                        resetLocationButtonState();
+                        return;
+                    }
                     await reverseGeocodeAndFill(lat, lng);
                     resetLocationButtonState();
                 },
@@ -380,7 +462,7 @@ function initStudentDeliveryMap() {
             );
         });
         useLocationButton.dataset.listenerBound = 'true';
-    } else if (useLocationButton) {
+    } else if (useLocationButton && !navigator.geolocation) {
         useLocationButton.classList.add('d-none');
     }
 }
@@ -411,9 +493,10 @@ window.addEventListener('load', () => {
         <div class="card-body">
             {% if google_maps_api_key %}
                 <div class="mb-3">
-                    <label for="delivery-address-search" class="form-label">Search Address</label>
-                    <input id="delivery-address-search" class="form-control" type="text" placeholder="Search hostel, hall, gate, or any campus landmark">
-                    <div class="delivery-map-hint mt-2">Pick a place from autocomplete, click on the map, or use your current location for a cleaner delivery address.</div>
+                    <label for="delivery-address" class="form-label">Delivery Address</label>
+                    <input id="delivery-address" list="iitk-landmarks-list" class="form-control" type="text" placeholder="Search Hall 1-13, SAC, LHC, library, gates, or another IITK landmark" value="{{ delivery_address }}">
+                    <datalist id="iitk-landmarks-list"></datalist>
+                    <div class="delivery-map-hint mt-2">Campus only. Use autocomplete, click the map, or use your current location. The same field below is what gets saved for the order.</div>
                 </div>
                 <div class="mb-3">
                     <div id="studentDeliveryMap" class="delivery-map"></div>
@@ -422,10 +505,12 @@ window.addEventListener('load', () => {
                     <button type="button" class="btn btn-outline-primary btn-sm" id="use-current-location">Use Current Location</button>
                     <a id="delivery-map-preview" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm d-none">Open In Google Maps</a>
                 </div>
+                <small class="text-muted">Tip: if Google autocomplete does not show a hall immediately, type the exact hall name like `Hall 7` or pick it from the built-in campus landmark list.</small>
+            {% else %}
+                <label for="delivery-address" class="form-label">Delivery Address</label>
+                <input id="delivery-address" class="form-control" type="text" placeholder="Enter your IIT Kanpur hostel/residence address" value="{{ delivery_address }}">
+                <small class="text-muted">Only IIT Kanpur campus addresses are allowed.</small>
             {% endif %}
-            <label for="delivery-address" class="form-label">Delivery Address</label>
-            <textarea id="delivery-address" class="form-control" placeholder="Enter your hostel/residence address" rows="3">{{ delivery_address }}</textarea>
-            <small class="text-muted">This confirmed address will be used for the delivery</small>
         </div>
     </div>
 
