@@ -3,7 +3,35 @@ from django.contrib import messages
 from django.contrib.auth import logout
 from django.http import JsonResponse
 from django.shortcuts import redirect
+from django.utils.cache import add_never_cache_headers
 from django.utils import timezone
+
+
+class NoStoreAuthenticatedPagesMiddleware:
+    """
+    Prevent browsers from caching authenticated pages so sensitive content
+    cannot be resurfaced with the back button after logout.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+
+        if self._should_disable_cache(request, response):
+            add_never_cache_headers(response)
+
+        return response
+
+    def _should_disable_cache(self, request, response):
+        if request.method not in ('GET', 'HEAD'):
+            return False
+        if response.has_header('Cache-Control'):
+            return False
+        if request.user.is_authenticated:
+            return True
+        return request.path == '/logout/'
 
 
 class InactivityTimeoutMiddleware:

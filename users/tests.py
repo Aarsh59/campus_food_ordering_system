@@ -374,6 +374,12 @@ class LogoutViewTest(TestCase):
         response = self.client.get(reverse('logout'))
         self.assertRedirects(response, reverse('login'))
 
+    def test_logout_response_disables_browser_caching(self):
+        response = self.client.get(reverse('logout'))
+
+        self.assertIn('no-store', response['Cache-Control'])
+        self.assertIn('no-cache', response['Cache-Control'])
+
     def test_user_is_logged_out_after_logout(self):
         self.client.get(reverse('logout'))
         response = self.client.get(reverse('student_dashboard'))
@@ -403,6 +409,26 @@ class HomeViewTest(TestCase):
         response = self.client.get(self.home_url)
 
         self.assertRedirects(response, reverse('student_dashboard'))
+
+
+class AuthenticatedPageCacheHeadersTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.student = User.objects.create_user(
+            username='cache-student',
+            password='Campus@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.client.login(username='cache-student', password='Campus@1234')
+
+    def test_student_dashboard_disables_browser_caching(self):
+        response = self.client.get(reverse('student_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('no-store', response['Cache-Control'])
+        self.assertIn('no-cache', response['Cache-Control'])
 
 
 class SessionInactivityTimeoutTest(TestCase):
