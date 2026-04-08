@@ -3,6 +3,9 @@ from django.urls import reverse
 from django.core import mail
 from django.core.exceptions import ValidationError
 from django.contrib.admin.sites import AdminSite
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -458,6 +461,71 @@ class SessionInactivityTimeoutTest(TestCase):
         self.assertTrue(
             any('logged out due to inactivity' in str(message).lower() for message in messages_list)
         )
+
+
+class PasswordManagementTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(
+            username='password-user',
+            email='password-user@iitk.ac.in',
+            password='Campus@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT,
+        )
+
+    def test_forgot_password_sends_reset_email(self):
+        response = self.client.post(reverse('password_reset'), {
+            'email': 'password-user@iitk.ac.in',
+        })
+
+        self.assertRedirects(response, reverse('password_reset_done'))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('Campus Food password reset', mail.outbox[0].subject)
+        self.assertIn('/password-reset-confirm/', mail.outbox[0].body)
+
+    def test_password_reset_confirm_updates_password(self):
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        token = default_token_generator.make_token(self.user)
+        confirm_url = reverse('password_reset_confirm', kwargs={'uidb64': uid, 'token': token})
+
+        get_response = self.client.get(confirm_url)
+        self.assertEqual(get_response.status_code, 302)
+        self.assertIn('/password-reset-confirm/', get_response.url)
+        self.assertTrue(get_response.url.endswith('/set-password/'))
+
+        post_response = self.client.post(get_response.url, {
+            'new_password1': 'Updated@1234',
+            'new_password2': 'Updated@1234',
+        })
+
+        self.assertRedirects(post_response, reverse('password_reset_complete'))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Updated@1234'))
+
+    def test_password_reset_confirm_invalid_token_shows_message(self):
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        response = self.client.get(
+            reverse('password_reset_confirm', kwargs={'uidb64': uid, 'token': 'invalid-token'})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Reset Link Invalid')
+
+    def test_change_password_shows_error_when_current_password_is_wrong(self):
+        self.client.login(username='password-user', password='Campus@1234')
+
+        response = self.client.post(reverse('change_password'), {
+            'old_password': 'Wrong@1234',
+            'new_password1': 'Updated@1234',
+            'new_password2': 'Updated@1234',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Your old password was entered incorrectly')
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Campus@1234'))
 
 
 # ─── Staff Application Tests ──────────────────────────────────────────────────
@@ -1412,6 +1480,15 @@ class VendorDashboardTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'vendor/dashboard.html')
 
+    def test_vendor_dashboard_shows_account_management_links(self):
+        response = self.client.get(reverse('vendor_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Account Management')
+        self.assertContains(response, reverse('change_password'))
+        self.assertContains(response, reverse('account_settings'))
+        self.assertContains(response, 'Delete Account')
+
     def test_unauthorized_access_to_vendor_dashboard(self):
         student = User.objects.create_user(
             username='student1',
@@ -1612,6 +1689,15 @@ class DeliveryDashboardTest(TestCase):
         response = self.client.get(reverse('delivery_dashboard'))
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'delivery/dashboard.html')
+
+    def test_delivery_dashboard_shows_account_management_links(self):
+        response = self.client.get(reverse('delivery_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Account Management')
+        self.assertContains(response, reverse('change_password'))
+        self.assertContains(response, reverse('account_settings'))
+        self.assertContains(response, 'Delete Account')
 
     def test_unauthorized_access_to_delivery_dashboard(self):
         student = User.objects.create_user(

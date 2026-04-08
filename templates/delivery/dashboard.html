@@ -227,6 +227,23 @@ function markDelivered(assignmentId) {
     <p class="text-muted">Accept deliveries and track your orders</p>
 </div>
 
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+            <div>
+                <h5 class="card-title mb-1">Account Management</h5>
+                <p class="text-muted mb-0">
+                    Change your password using your current password, or permanently delete this delivery account.
+                </p>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{% url 'change_password' %}" class="btn btn-primary">Change Password</a>
+                <a href="{% url 'account_settings' %}" class="btn btn-outline-danger">Delete Account</a>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Navigation Tabs -->
 <ul class="nav nav-tabs mb-4" role="tablist">
     <li class="nav-item">
