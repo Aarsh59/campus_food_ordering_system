@@ -63,6 +63,8 @@ const otpState = {
     cooldownTimerId: null,
     cooldownUntil: null,
     cooldownEmail: '',
+    cooldownStatusPrefix: '',
+    cooldownStatusIsError: false,
 }
 
 function setOtpStatus(message, isError) {
@@ -90,6 +92,8 @@ function clearCooldownState() {
     otpState.cooldownTimerId = null
     otpState.cooldownUntil = null
     otpState.cooldownEmail = ''
+    otpState.cooldownStatusPrefix = ''
+    otpState.cooldownStatusIsError = false
 }
 
 function getRemainingCooldownSeconds() {
@@ -108,6 +112,16 @@ function setEmailInputState() {
     emailInput.readOnly = otpState.isSending || hasActiveCooldown()
 }
 
+function setCooldownStatus(remainingSeconds) {
+    if (!otpState.cooldownStatusPrefix) {
+        return
+    }
+    setOtpStatus(
+        `${otpState.cooldownStatusPrefix} ${remainingSeconds}s.`,
+        otpState.cooldownStatusIsError
+    )
+}
+
 function setOtpButtonState() {
     const button = getOtpButton()
 
@@ -122,12 +136,17 @@ function setOtpButtonState() {
     if (remainingSeconds > 0) {
         button.disabled = true
         button.textContent = `Resend in ${remainingSeconds}s`
+        setCooldownStatus(remainingSeconds)
         setEmailInputState()
         return
     }
 
     if (otpState.cooldownUntil) {
+        const hadCooldownMessage = Boolean(otpState.cooldownStatusPrefix)
         clearCooldownState()
+        if (hadCooldownMessage) {
+            setOtpStatus('You can request a new OTP now.', false)
+        }
     }
 
     button.disabled = false
@@ -135,10 +154,12 @@ function setOtpButtonState() {
     setEmailInputState()
 }
 
-function startCooldown(seconds, email) {
+function startCooldown(seconds, email, statusPrefix, isError) {
     clearCooldownState()
     otpState.cooldownUntil = Date.now() + (seconds * 1000)
     otpState.cooldownEmail = email
+    otpState.cooldownStatusPrefix = statusPrefix
+    otpState.cooldownStatusIsError = isError
     setOtpButtonState()
     otpState.cooldownTimerId = setInterval(() => {
         setOtpButtonState()
@@ -180,9 +201,9 @@ function sendOtp(channel) {
     .then(({ok, data}) => {
         setOtpStatus(ok && data.success ? data.message : data.error, !(ok && data.success))
         if (ok && data.success) {
-            startCooldown(60, email)
+            startCooldown(60, email, 'OTP sent. You can request a new code in', false)
         } else if (data.retry_after_seconds) {
-            startCooldown(data.retry_after_seconds, email)
+            startCooldown(data.retry_after_seconds, email, 'Please wait before requesting another OTP:', true)
         }
     })
     .catch(() => setOtpStatus('Could not send OTP. Please try again.', true))
