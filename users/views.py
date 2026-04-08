@@ -173,7 +173,7 @@ def send_registration_otp(request):
     if channel != ContactOTP.Channel.EMAIL:
         return JsonResponse({'success': False, 'error': 'Only email OTP is supported right now'}, status=400)
 
-    if not is_allowed_email_domain(email):
+    if purpose == ContactOTP.Purpose.STUDENT_REGISTER and not is_allowed_email_domain(email):
         return JsonResponse({
             'success': False,
             'error': f'Only {settings.ALLOWED_EMAIL_DOMAIN} emails are allowed',
@@ -302,10 +302,6 @@ def apply_view(request):
 
         if role_applied not in StaffApplication.Role.values:
             messages.error(request, 'Please select a valid role')
-            return render(request, 'users/apply.html')
-
-        if not is_allowed_email_domain(email):
-            messages.error(request, f'Only {settings.ALLOWED_EMAIL_DOMAIN} emails are allowed')
             return render(request, 'users/apply.html')
 
         if not is_valid_phone(phone):

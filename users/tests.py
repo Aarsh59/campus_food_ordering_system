@@ -214,6 +214,17 @@ class RegisterViewTest(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.json()['success'])
 
+    def test_send_staff_application_email_otp_allows_external_email(self):
+        response = self.client.post(reverse('send_registration_otp'), {
+            'purpose': ContactOTP.Purpose.STAFF_APPLICATION,
+            'channel': ContactOTP.Channel.EMAIL,
+            'email': 'vendor@gmail.com',
+            'phone': '9876543210',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['success'])
+
     @override_settings(OTP_RESEND_COOLDOWN_SECONDS=60)
     def test_send_registration_email_otp_enforces_resend_cooldown(self):
         payload = {
@@ -443,7 +454,7 @@ class StaffApplicationTest(TestCase):
         response = self.client.post(self.url, {
             'role_applied'   : 'VENDOR',
             'full_name'      : 'Test Vendor',
-            'email'          : 'vendor@iitk.ac.in',
+            'email'          : 'vendor@gmail.com',
             'phone'          : '9876543210',
             'aadhaar_number' : '123456789012',
             'outlet_name'    : 'Test Outlet',
@@ -451,28 +462,28 @@ class StaffApplicationTest(TestCase):
             'cuisine_type'   : 'Fast Food',
             'operating_hours': '9AM - 9PM',
             'fssai_license'  : '12345678901234',
-            **self._otp_fields(email='vendor@iitk.ac.in'),
+            **self._otp_fields(email='vendor@gmail.com'),
         })
         self.assertRedirects(response, reverse('pending'))
         self.assertTrue(
-            StaffApplication.objects.filter(email='vendor@iitk.ac.in').exists()
+            StaffApplication.objects.filter(email='vendor@gmail.com').exists()
         )
 
     def test_delivery_application_submission(self):
         response = self.client.post(self.url, {
             'role_applied'    : 'DELIVERY',
             'full_name'       : 'Test Delivery',
-            'email'           : 'delivery@iitk.ac.in',
+            'email'           : 'delivery@gmail.com',
             'phone'           : '9876543210',
             'aadhaar_number'  : '123456789012',
             'vehicle_type'    : 'Motorcycle',
             'vehicle_number'  : 'UP32AB1234',
             'driving_license' : 'DL123456789',
-            **self._otp_fields(email='delivery@iitk.ac.in'),
+            **self._otp_fields(email='delivery@gmail.com'),
         })
         self.assertRedirects(response, reverse('pending'))
         self.assertTrue(
-            StaffApplication.objects.filter(email='delivery@iitk.ac.in').exists()
+            StaffApplication.objects.filter(email='delivery@gmail.com').exists()
         )
 
     def test_duplicate_application_rejected(self):
