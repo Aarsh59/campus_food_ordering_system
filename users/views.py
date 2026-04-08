@@ -73,6 +73,55 @@ def _dashboard_route_name_for_user(user):
     return 'login'
 
 
+def _cancel_pending_checkout_orders(student, cancellation_reason, order_ids=None, razorpay_order_id=None):
+    """
+    Cancel pending checkout orders left behind by an abandoned payment flow.
+    """
+    pending_orders_qs = Order.objects.filter(
+        student=student,
+        payment_status=Order.PaymentStatus.PENDING,
+    )
+    if order_ids is not None:
+        pending_orders_qs = pending_orders_qs.filter(id__in=order_ids)
+
+    pending_orders = list(pending_orders_qs)
+    if not pending_orders:
+        return 0
+
+    order_ids = [order.id for order in pending_orders]
+    pending_payment_qs = Payment.objects.filter(
+        student=student,
+        order_id__in=order_ids,
+    )
+    if razorpay_order_id:
+        pending_payment_qs = pending_payment_qs.filter(razorpay_order_id=razorpay_order_id)
+    else:
+        pending_payment_qs = pending_payment_qs.filter(status=Payment.PaymentStatus.PENDING)
+
+    pending_payment = pending_payment_qs.order_by('-created_at').first()
+
+    if pending_payment and pending_payment.status == Payment.PaymentStatus.SUCCESS:
+        return 0
+
+    for order in pending_orders:
+        order.payment_status = Order.PaymentStatus.FAILED
+        order.vendor_status = Order.VendorStatus.CANCELLED
+        order.save(update_fields=['payment_status', 'vendor_status', 'updated_at'])
+
+        _notify_user(
+            student,
+            order,
+            f"{cancellation_reason}. Order {order.order_code} was cancelled.",
+            email_subject='Order Cancelled',
+        )
+
+    if pending_payment and pending_payment.status == Payment.PaymentStatus.PENDING:
+        pending_payment.status = Payment.PaymentStatus.CANCELLED
+        pending_payment.save(update_fields=['status', 'updated_at'])
+
+    return len(pending_orders)
+
+
 def redirect_authenticated_user(user):
     return redirect(_dashboard_route_name_for_user(user))
 
@@ -1009,6 +1058,18 @@ def student_checkout(request):
     if request.user.role != User.Role.STUDENT:
         messages.error(request, 'Unauthorized access')
         return redirect('login')
+
+    cancelled_orders = _cancel_pending_checkout_orders(
+        request.user,
+        'Your previous checkout session expired after the page was reloaded',
+    )
+    if cancelled_orders:
+        messages.warning(
+            request,
+            'Your previous payment session was cancelled after the checkout page was reloaded. '
+            'Please review your cart and start payment again.',
+        )
+        return redirect('student_view_cart')
     
     cart = get_object_or_404(Cart, student=request.user)
     
@@ -1224,21 +1285,12 @@ def student_cancel_payment(request):
             'error': 'Payment already completed for this order.',
         }, status=400)
 
-    for order in orders:
-        order.payment_status = Order.PaymentStatus.FAILED
-        order.vendor_status = Order.VendorStatus.CANCELLED
-        order.save(update_fields=['payment_status', 'vendor_status', 'updated_at'])
-
-        _notify_user(
-            request.user,
-            order,
-            f"{cancellation_reason}. Order {order.order_code} was cancelled.",
-            email_subject='Order Cancelled',
-        )
-
-    if payment and payment.status == Payment.PaymentStatus.PENDING:
-        payment.status = Payment.PaymentStatus.CANCELLED
-        payment.save(update_fields=['status', 'updated_at'])
+    _cancel_pending_checkout_orders(
+        request.user,
+        cancellation_reason,
+        order_ids=raw_order_ids,
+        razorpay_order_id=razorpay_order_id,
+    )
 
     return JsonResponse({
         'success': True,

@@ -84,6 +84,26 @@
     }
 </style>
 <script>
+const studentCheckoutState = {
+    map: null,
+    marker: null,
+    selectedPoint: null,
+    useLocationButton: null,
+    isLocating: false,
+};
+
+function resetLocationButtonState() {
+    const button = studentCheckoutState.useLocationButton || document.getElementById('use-current-location');
+    if (!button) {
+        return;
+    }
+
+    studentCheckoutState.useLocationButton = button;
+    studentCheckoutState.isLocating = false;
+    button.disabled = false;
+    button.textContent = 'Use Current Location';
+}
+
 function createOrder() {
     const address = document.getElementById('delivery-address').value.trim();
     if (!address) {
@@ -231,20 +251,34 @@ function initStudentDeliveryMap() {
     }
 
     const defaultCenter = { lat: 26.5106, lng: 80.2461 }; // G66M+W8P, Kalyanpur, Kanpur
-    const map = new google.maps.Map(mapEl, {
-        center: defaultCenter,
-        zoom: 15,
-        mapTypeControl: false,
-        streetViewControl: false,
-        fullscreenControl: false,
-    });
 
-    const marker = new google.maps.Marker({
-        map: map,
-        position: defaultCenter,
-        draggable: true,
-        animation: google.maps.Animation.DROP,
-    });
+    if (!studentCheckoutState.map) {
+        studentCheckoutState.map = new google.maps.Map(mapEl, {
+            center: defaultCenter,
+            zoom: 15,
+            mapTypeControl: false,
+            streetViewControl: false,
+            fullscreenControl: false,
+        });
+
+        studentCheckoutState.marker = new google.maps.Marker({
+            map: studentCheckoutState.map,
+            position: defaultCenter,
+            draggable: true,
+            animation: google.maps.Animation.DROP,
+        });
+        studentCheckoutState.selectedPoint = defaultCenter;
+    } else {
+        google.maps.event.trigger(studentCheckoutState.map, 'resize');
+        studentCheckoutState.map.setCenter(studentCheckoutState.selectedPoint || defaultCenter);
+        studentCheckoutState.map.setZoom(studentCheckoutState.selectedPoint ? 17 : 15);
+        studentCheckoutState.marker.setMap(studentCheckoutState.map);
+    }
+
+    const map = studentCheckoutState.map;
+    const marker = studentCheckoutState.marker;
+    studentCheckoutState.useLocationButton = useLocationButton;
+    resetLocationButtonState();
 
     function fillAddress(address, lat, lng) {
         addressField.value = address || '';
@@ -277,26 +311,30 @@ function initStudentDeliveryMap() {
 
     function setSelection(lat, lng) {
         const point = { lat: lat, lng: lng };
+        studentCheckoutState.selectedPoint = point;
         marker.setPosition(point);
         map.setCenter(point);
         map.setZoom(17);
     }
 
-    map.addListener('click', (e) => {
-        const lat = e.latLng.lat();
-        const lng = e.latLng.lng();
-        setSelection(lat, lng);
-        reverseGeocodeAndFill(lat, lng);
-    });
+    if (!mapEl.dataset.mapListenersBound) {
+        map.addListener('click', (e) => {
+            const lat = e.latLng.lat();
+            const lng = e.latLng.lng();
+            setSelection(lat, lng);
+            reverseGeocodeAndFill(lat, lng);
+        });
 
-    marker.addListener('dragend', (e) => {
-        const lat = e.latLng.lat();
-        const lng = e.latLng.lng();
-        setSelection(lat, lng);
-        reverseGeocodeAndFill(lat, lng);
-    });
+        marker.addListener('dragend', (e) => {
+            const lat = e.latLng.lat();
+            const lng = e.latLng.lng();
+            setSelection(lat, lng);
+            reverseGeocodeAndFill(lat, lng);
+        });
+        mapEl.dataset.mapListenersBound = 'true';
+    }
 
-    if (searchField) {
+    if (searchField && !searchField.dataset.autocompleteBound) {
         const autocomplete = new google.maps.places.Autocomplete(searchField, {
             fields: ['formatted_address', 'geometry', 'name']
         });
@@ -312,10 +350,13 @@ function initStudentDeliveryMap() {
             setSelection(lat, lng);
             fillAddress(place.formatted_address || place.name || '', lat, lng);
         });
+        searchField.dataset.autocompleteBound = 'true';
     }
 
-    if (useLocationButton && navigator.geolocation) {
+    if (useLocationButton && navigator.geolocation && !useLocationButton.dataset.listenerBound) {
         useLocationButton.addEventListener('click', () => {
+            resetLocationButtonState();
+            studentCheckoutState.isLocating = true;
             useLocationButton.disabled = true;
             useLocationButton.textContent = 'Locating...';
 
@@ -325,21 +366,35 @@ function initStudentDeliveryMap() {
                     const lng = position.coords.longitude;
                     setSelection(lat, lng);
                     await reverseGeocodeAndFill(lat, lng);
-                    useLocationButton.disabled = false;
-                    useLocationButton.textContent = 'Use Current Location';
+                    resetLocationButtonState();
                 },
-                () => {
-                    alert('We could not access your current location.');
-                    useLocationButton.disabled = false;
-                    useLocationButton.textContent = 'Use Current Location';
+                (error) => {
+                    if (error && error.code === error.PERMISSION_DENIED) {
+                        alert('Location permission was denied or expired. Please click "Use Current Location" again and allow access when your browser prompts you.');
+                    } else {
+                        alert('We could not access your current location.');
+                    }
+                    resetLocationButtonState();
                 },
                 { enableHighAccuracy: true, timeout: 10000 }
             );
         });
+        useLocationButton.dataset.listenerBound = 'true';
     } else if (useLocationButton) {
         useLocationButton.classList.add('d-none');
     }
 }
+
+window.addEventListener('pageshow', (event) => {
+    resetLocationButtonState();
+    if (event.persisted && window.google && window.google.maps) {
+        window.setTimeout(initStudentDeliveryMap, 0);
+    }
+});
+
+window.addEventListener('load', () => {
+    resetLocationButtonState();
+});
 {% endif %}
 </script>
 {% endblock %}

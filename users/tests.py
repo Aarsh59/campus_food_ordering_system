@@ -1104,6 +1104,32 @@ class StudentCheckoutTest(TestCase):
         response = self.client.get(reverse('student_checkout'))
         self.assertEqual(response.status_code, 302)  # Redirect to cart
 
+    def test_checkout_reload_cancels_stale_pending_payment_session(self):
+        stale_order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('200.00'),
+            delivery_address='Hall 1',
+            payment_status=Order.PaymentStatus.PENDING,
+        )
+        stale_payment = Payment.objects.create(
+            order=stale_order,
+            student=self.student,
+            razorpay_order_id='order_reload_123',
+            amount=Decimal('200.00'),
+            currency='INR',
+            status=Payment.PaymentStatus.PENDING,
+        )
+
+        response = self.client.get(reverse('student_checkout'))
+
+        self.assertRedirects(response, reverse('student_view_cart'))
+        stale_order.refresh_from_db()
+        stale_payment.refresh_from_db()
+        self.assertEqual(stale_order.payment_status, Order.PaymentStatus.FAILED)
+        self.assertEqual(stale_order.vendor_status, Order.VendorStatus.CANCELLED)
+        self.assertEqual(stale_payment.status, Payment.PaymentStatus.CANCELLED)
+
 
 class StudentOrdersTest(TestCase):
 
