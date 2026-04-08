@@ -16,8 +16,7 @@
       </div>
       <div class="mb-3">
         <label class="form-label">Search Address (Autocomplete)</label>
-        <input class="form-control" type="text" id="addressAutocomplete" list="vendor-landmarks-list" placeholder="Search Hall 1-13, SAC, LHC, library, gates, or another IITK landmark" />
-        <datalist id="vendor-landmarks-list"></datalist>
+        <input class="form-control" type="text" id="addressAutocomplete" placeholder="Search your IIT Kanpur outlet location" />
         <div class="text-muted small mt-1">
           Campus only. Selecting a map point or autocomplete result will auto-fill the saved outlet address.
         </div>
@@ -335,24 +334,6 @@
       return true;
     }
 
-    function normalizeLandmarkName(value) {
-      return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
-    }
-
-    function findCampusLandmark(query) {
-      const normalizedQuery = normalizeLandmarkName(query);
-      if (!normalizedQuery) {
-        return null;
-      }
-
-      return campusMapConfig.landmarks.find((landmark) => {
-        if (normalizeLandmarkName(landmark.name) === normalizedQuery) {
-          return true;
-        }
-        return (landmark.aliases || []).some((alias) => normalizeLandmarkName(alias) === normalizedQuery);
-      }) || null;
-    }
-
     async function reverseGeocodeAndFill(lat, lng) {
       if (!campusBounds.contains(new google.maps.LatLng(lat, lng))) {
         alert('Please choose a location inside the IIT Kanpur campus.');
@@ -400,26 +381,6 @@
     // Address autocomplete using Places API.
     const input = document.getElementById('addressAutocomplete');
     if (input) {
-      const datalist = document.getElementById('vendor-landmarks-list');
-      if (datalist) {
-        datalist.innerHTML = campusMapConfig.landmarks
-          .map((landmark) => `<option value="${landmark.name}"></option>`)
-          .join('');
-      }
-
-      input.addEventListener('change', () => {
-        const landmark = findCampusLandmark(input.value);
-        if (!landmark) {
-          return;
-        }
-
-        if (setSelection(landmark.lat, landmark.lng)) {
-          document.getElementById('googleMapsAddress').value = landmark.name;
-          document.getElementById('googleMapsLink').value =
-            `https://www.google.com/maps/search/?api=1&query=${landmark.lat},${landmark.lng}`;
-        }
-      });
-
       const autocomplete = new google.maps.places.Autocomplete(input, {
         bounds: campusBounds,
         componentRestrictions: { country: 'in' },

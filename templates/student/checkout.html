@@ -260,24 +260,6 @@ function initStudentDeliveryMap() {
         return campusBounds.contains(new google.maps.LatLng(lat, lng));
     }
 
-    function normalizeLandmarkName(value) {
-        return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
-    }
-
-    function findCampusLandmark(query) {
-        const normalizedQuery = normalizeLandmarkName(query);
-        if (!normalizedQuery) {
-            return null;
-        }
-
-        return campusMapConfig.landmarks.find((landmark) => {
-            if (normalizeLandmarkName(landmark.name) === normalizedQuery) {
-                return true;
-            }
-            return (landmark.aliases || []).some((alias) => normalizeLandmarkName(alias) === normalizedQuery);
-        }) || null;
-    }
-
     if (!studentCheckoutState.map) {
         studentCheckoutState.map = new google.maps.Map(mapEl, {
             center: defaultCenter,
@@ -357,32 +339,6 @@ function initStudentDeliveryMap() {
         map.setCenter(point);
         map.setZoom(18);
         return true;
-    }
-
-    function selectLandmark(landmark) {
-        if (!landmark) {
-            return;
-        }
-        if (setSelection(landmark.lat, landmark.lng)) {
-            fillAddress(landmark.name, landmark.lat, landmark.lng);
-        }
-    }
-
-    if (!addressField.dataset.landmarksBound) {
-        const datalist = document.getElementById('iitk-landmarks-list');
-        if (datalist) {
-            datalist.innerHTML = campusMapConfig.landmarks
-                .map((landmark) => `<option value="${landmark.name}"></option>`)
-                .join('');
-        }
-
-        addressField.addEventListener('change', () => {
-            const landmark = findCampusLandmark(addressField.value);
-            if (landmark) {
-                selectLandmark(landmark);
-            }
-        });
-        addressField.dataset.landmarksBound = 'true';
     }
 
     if (!mapEl.dataset.mapListenersBound) {
@@ -494,8 +450,7 @@ window.addEventListener('load', () => {
             {% if google_maps_api_key %}
                 <div class="mb-3">
                     <label for="delivery-address" class="form-label">Delivery Address</label>
-                    <input id="delivery-address" list="iitk-landmarks-list" class="form-control" type="text" placeholder="Search Hall 1-13, SAC, LHC, library, gates, or another IITK landmark" value="{{ delivery_address }}">
-                    <datalist id="iitk-landmarks-list"></datalist>
+                    <input id="delivery-address" class="form-control" type="text" placeholder="Search your IIT Kanpur delivery location" value="{{ delivery_address }}">
                     <div class="delivery-map-hint mt-2">Campus only. Use autocomplete, click the map, or use your current location. The same field below is what gets saved for the order.</div>
                 </div>
                 <div class="mb-3">
@@ -505,7 +460,7 @@ window.addEventListener('load', () => {
                     <button type="button" class="btn btn-outline-primary btn-sm" id="use-current-location">Use Current Location</button>
                     <a id="delivery-map-preview" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm d-none">Open In Google Maps</a>
                 </div>
-                <small class="text-muted">Tip: if Google autocomplete does not show a hall immediately, type the exact hall name like `Hall 7` or pick it from the built-in campus landmark list.</small>
+                <small class="text-muted">Only IIT Kanpur campus locations are allowed.</small>
             {% else %}
                 <label for="delivery-address" class="form-label">Delivery Address</label>
                 <input id="delivery-address" class="form-control" type="text" placeholder="Enter your IIT Kanpur hostel/residence address" value="{{ delivery_address }}">

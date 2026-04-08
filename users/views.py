@@ -55,32 +55,6 @@ IITK_CAMPUS_CENTER = {
     'lat': 26.5124,
     'lng': 80.2329,
 }
-IITK_CAMPUS_LANDMARKS = [
-    {'name': 'Hall 1, IIT Kanpur', 'lat': 26.5055, 'lng': 80.2336, 'aliases': ['hall 1', 'h1']},
-    {'name': 'Hall 2, IIT Kanpur', 'lat': 26.5049, 'lng': 80.2354, 'aliases': ['hall 2', 'h2']},
-    {'name': 'Hall 3, IIT Kanpur', 'lat': 26.5054, 'lng': 80.2371, 'aliases': ['hall 3', 'h3']},
-    {'name': 'Hall 4, IIT Kanpur', 'lat': 26.5051, 'lng': 80.2388, 'aliases': ['hall 4', 'h4']},
-    {'name': 'Hall 5, IIT Kanpur', 'lat': 26.5071, 'lng': 80.2363, 'aliases': ['hall 5', 'h5']},
-    {'name': 'Hall 6, IIT Kanpur', 'lat': 26.5078, 'lng': 80.2382, 'aliases': ['hall 6', 'h6']},
-    {'name': 'Hall 7, IIT Kanpur', 'lat': 26.5096, 'lng': 80.2354, 'aliases': ['hall 7', 'h7']},
-    {'name': 'Hall 8, IIT Kanpur', 'lat': 26.5101, 'lng': 80.2372, 'aliases': ['hall 8', 'h8']},
-    {'name': 'Hall 9, IIT Kanpur', 'lat': 26.5118, 'lng': 80.2346, 'aliases': ['hall 9', 'h9']},
-    {'name': 'Hall 10, IIT Kanpur', 'lat': 26.5122, 'lng': 80.2366, 'aliases': ['hall 10', 'h10']},
-    {'name': 'Hall 11, IIT Kanpur', 'lat': 26.5139, 'lng': 80.2335, 'aliases': ['hall 11', 'h11']},
-    {'name': 'Hall 12, IIT Kanpur', 'lat': 26.5146, 'lng': 80.2355, 'aliases': ['hall 12', 'h12']},
-    {'name': 'Hall 13, IIT Kanpur', 'lat': 26.5160, 'lng': 80.2372, 'aliases': ['hall 13', 'h13']},
-    {'name': 'Lecture Hall Complex, IIT Kanpur', 'lat': 26.5129, 'lng': 80.2307, 'aliases': ['lhc', 'lecture hall complex']},
-    {'name': 'Students Activity Centre, IIT Kanpur', 'lat': 26.5089, 'lng': 80.2310, 'aliases': ['sac', 'student activity centre', 'students activity centre']},
-    {'name': 'PK Kelkar Library, IIT Kanpur', 'lat': 26.5122, 'lng': 80.2291, 'aliases': ['library', 'kelkar library', 'pk kelkar library']},
-    {'name': 'Main Building, IIT Kanpur', 'lat': 26.5120, 'lng': 80.2320, 'aliases': ['main building']},
-    {'name': 'Main Gate, IIT Kanpur', 'lat': 26.4999, 'lng': 80.2330, 'aliases': ['main gate']},
-    {'name': 'Health Centre, IIT Kanpur', 'lat': 26.5108, 'lng': 80.2279, 'aliases': ['health centre', 'hospital']},
-    {'name': 'Visitors Hostel, IIT Kanpur', 'lat': 26.5018, 'lng': 80.2315, 'aliases': ['visitors hostel', 'vh']},
-    {'name': 'Shopping Centre, IIT Kanpur', 'lat': 26.5072, 'lng': 80.2300, 'aliases': ['shopping centre', 'shop c']},
-    {'name': 'Open Air Theatre, IIT Kanpur', 'lat': 26.5099, 'lng': 80.2322, 'aliases': ['oat', 'open air theatre']},
-]
-
-
 def _format_retry_after_message(retry_after_seconds: int) -> str:
     if retry_after_seconds <= 1:
         return 'Please wait 1 second before requesting another OTP.'
@@ -415,7 +389,6 @@ def _campus_map_context() -> dict:
         'campus_map_config_json': json.dumps({
             'bounds': IITK_CAMPUS_BOUNDS,
             'center': IITK_CAMPUS_CENTER,
-            'landmarks': IITK_CAMPUS_LANDMARKS,
         }),
     }
 
