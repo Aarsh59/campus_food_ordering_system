@@ -985,7 +985,8 @@ class StudentCartTest(TestCase):
         self.menu_item = MenuItem.objects.create(
             vendor=self.vendor_profile,
             name='Burger',
-            price=Decimal('100.00')
+            price=Decimal('100.00'),
+            stock=5,
         )
 
     def test_add_to_cart(self):
@@ -999,13 +1000,13 @@ class StudentCartTest(TestCase):
         cart_item = CartItem.objects.get(cart=cart, menu_item=self.menu_item)
         self.assertEqual(cart_item.quantity, 2)
 
-    def test_add_to_cart_rejects_quantity_above_limit(self):
+    def test_add_to_cart_rejects_quantity_above_stock(self):
         response = self.client.post(reverse('student_add_to_cart', args=[self.menu_item.id]), {
-            'quantity': 21
+            'quantity': 6
         })
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()['error'], 'Quantity cannot exceed 20')
+        self.assertEqual(response.json()['error'], 'Only 5 of Burger available right now.')
         self.assertFalse(CartItem.objects.filter(menu_item=self.menu_item, cart__student=self.student).exists())
 
     def test_view_cart(self):
@@ -1037,16 +1038,16 @@ class StudentCartTest(TestCase):
         cart_item.refresh_from_db()
         self.assertEqual(cart_item.quantity, 3)
 
-    def test_update_cart_item_rejects_quantity_above_limit(self):
+    def test_update_cart_item_rejects_quantity_above_stock(self):
         cart = Cart.objects.create(student=self.student)
         cart_item = CartItem.objects.create(cart=cart, menu_item=self.menu_item, quantity=1)
 
         response = self.client.post(reverse('student_update_cart_item', args=[cart_item.id]), {
-            'quantity': 21
+            'quantity': 6
         })
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()['error'], 'Quantity cannot exceed 20')
+        self.assertEqual(response.json()['error'], 'Only 5 of Burger available right now.')
         cart_item.refresh_from_db()
         self.assertEqual(cart_item.quantity, 1)
 
@@ -1085,13 +1086,13 @@ class StudentCartTest(TestCase):
         cart_item.refresh_from_db()
         self.assertEqual(cart_item.quantity, 2)
 
-    def test_update_menu_cart_item_rejects_quantity_above_limit(self):
+    def test_update_menu_cart_item_rejects_quantity_above_stock(self):
         response = self.client.post(reverse('student_update_menu_cart_item', args=[self.menu_item.id]), {
-            'quantity': 21
+            'quantity': 6
         })
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()['error'], 'Quantity cannot exceed 20')
+        self.assertEqual(response.json()['error'], 'Only 5 of Burger available right now.')
         self.assertFalse(CartItem.objects.filter(cart__student=self.student, menu_item=self.menu_item).exists())
 
 
@@ -1120,7 +1121,8 @@ class StudentCheckoutTest(TestCase):
         self.menu_item = MenuItem.objects.create(
             vendor=self.vendor_profile,
             name='Burger',
-            price=Decimal('100.00')
+            price=Decimal('100.00'),
+            stock=5,
         )
         self.cart = Cart.objects.create(student=self.student)
         CartItem.objects.create(cart=self.cart, menu_item=self.menu_item, quantity=2)
@@ -1162,9 +1164,9 @@ class StudentCheckoutTest(TestCase):
         self.assertEqual(stale_payment.status, Payment.PaymentStatus.CANCELLED)
 
     @patch('users.views.razorpay.Client')
-    def test_create_order_rejects_cart_items_above_limit(self, mock_razorpay_client):
+    def test_create_order_rejects_cart_items_above_stock(self, mock_razorpay_client):
         cart_item = CartItem.objects.get(cart=self.cart, menu_item=self.menu_item)
-        cart_item.quantity = 21
+        cart_item.quantity = 6
         cart_item.save()
 
         response = self.client.post(reverse('student_create_order'), {
@@ -1172,8 +1174,40 @@ class StudentCheckoutTest(TestCase):
         })
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('exceeds the maximum quantity of 20', response.json()['error'])
+        self.assertEqual(response.json()['error'], 'Only 5 of Burger available right now.')
         mock_razorpay_client.assert_not_called()
+
+    @patch('users.views.razorpay.Client')
+    def test_create_order_reserves_stock_and_cancel_restores_it(self, mock_razorpay_client):
+        mock_client_instance = mock_razorpay_client.return_value
+        mock_client_instance.order.create.return_value = {
+            'id': 'order_stock_123',
+            'amount': 20000,
+            'currency': 'INR'
+        }
+
+        response = self.client.post(reverse('student_create_order'), {
+            'delivery_address': 'Hall 1'
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.menu_item.refresh_from_db()
+        self.assertEqual(self.menu_item.stock, 3)
+
+        payload = response.json()
+        cancel_response = self.client.post(
+            reverse('student_cancel_payment'),
+            data={
+                'razorpay_order_id': payload['razorpay_order_id'],
+                'order_ids': payload['orders'],
+                'reason': 'Stock restore check',
+            },
+            content_type='application/json'
+        )
+
+        self.assertEqual(cancel_response.status_code, 200)
+        self.menu_item.refresh_from_db()
+        self.assertEqual(self.menu_item.stock, 5)
 
 
 class StudentOrdersTest(TestCase):
@@ -1216,7 +1250,13 @@ class StudentOrdersTest(TestCase):
         self.assertTemplateUsed(response, 'student/order_detail.html')
         self.assertContains(response, self.order.order_code)
 
-    def test_quick_reorder_caps_quantity_at_twenty(self):
+    def test_quick_reorder_caps_quantity_at_current_stock(self):
+        reorder_menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Loaded Fries',
+            price=Decimal('150.00'),
+            stock=7,
+        )
         delivered_order = Order.objects.create(
             student=self.student,
             vendor=self.vendor_profile,
@@ -1225,11 +1265,7 @@ class StudentOrdersTest(TestCase):
         )
         OrderItem.objects.create(
             order=delivered_order,
-            vendor_item=MenuItem.objects.create(
-                vendor=self.vendor_profile,
-                name='Loaded Fries',
-                price=Decimal('150.00')
-            ),
+            vendor_item=reorder_menu_item,
             item_name='Loaded Fries',
             unit_price=Decimal('150.00'),
             quantity=25,
@@ -1240,7 +1276,7 @@ class StudentOrdersTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()['success'])
         cart_item = CartItem.objects.get(cart__student=self.student, menu_item__name='Loaded Fries')
-        self.assertEqual(cart_item.quantity, 20)
+        self.assertEqual(cart_item.quantity, 7)
 
 
 # ─── Vendor Module Tests ──────────────────────────────────────────────────────
@@ -1350,10 +1386,12 @@ class VendorMenuTest(TestCase):
         response = self.client.post(reverse('vendor_menu_add'), {
             'name': 'New Item',
             'price': '150.00',
+            'stock': '12',
             'description': 'New description'
         })
         self.assertEqual(response.status_code, 302)  # Redirect to dashboard
         self.assertTrue(MenuItem.objects.filter(name='New Item').exists())
+        self.assertEqual(MenuItem.objects.get(name='New Item').stock, 12)
 
     def test_update_menu_item(self):
         menu_item = MenuItem.objects.create(
@@ -1364,12 +1402,14 @@ class VendorMenuTest(TestCase):
         response = self.client.post(reverse('vendor_menu_update', args=[menu_item.id]), {
             'name': 'Updated Item',
             'price': '120.00',
+            'stock': '8',
             'description': 'Updated description'
         })
         self.assertEqual(response.status_code, 302)
         menu_item.refresh_from_db()
         self.assertEqual(menu_item.name, 'Updated Item')
         self.assertEqual(menu_item.price, Decimal('120.00'))
+        self.assertEqual(menu_item.stock, 8)
 
 
 class VendorOrderManagementTest(TestCase):
@@ -1401,30 +1441,45 @@ class VendorOrderManagementTest(TestCase):
         )
 
     def test_accept_order(self):
-        response = self.client.post(reverse('vendor_ticket_accept', args=[self.order.id]))
+        response = self.client.post(reverse('vendor_ticket_accept', args=[self.order.id]), follow=True)
         self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data['success'])
         self.order.refresh_from_db()
         self.assertEqual(self.order.vendor_decision, Order.VendorDecision.ACCEPTED)
 
     def test_reject_order(self):
-        response = self.client.post(reverse('vendor_ticket_reject', args=[self.order.id]))
+        response = self.client.post(reverse('vendor_ticket_reject', args=[self.order.id]), follow=True)
         self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data['success'])
         self.order.refresh_from_db()
         self.assertEqual(self.order.vendor_decision, Order.VendorDecision.REJECTED)
+
+    def test_reject_order_restores_reserved_stock(self):
+        menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Wrap',
+            price=Decimal('80.00'),
+            stock=2,
+        )
+        OrderItem.objects.create(
+            order=self.order,
+            vendor_item=menu_item,
+            item_name='Wrap',
+            unit_price=Decimal('80.00'),
+            quantity=3,
+        )
+
+        response = self.client.post(reverse('vendor_ticket_reject', args=[self.order.id]), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        menu_item.refresh_from_db()
+        self.assertEqual(menu_item.stock, 5)
 
     def test_update_order_status(self):
         self.order.vendor_decision = Order.VendorDecision.ACCEPTED
         self.order.save()
         response = self.client.post(reverse('vendor_order_status_update', args=[self.order.id]), {
-            'status': 'PREPARING'
-        })
+            'vendor_status': 'PREPARING'
+        }, follow=True)
         self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data['success'])
         self.order.refresh_from_db()
         self.assertEqual(self.order.vendor_status, Order.VendorStatus.PREPARING)
 

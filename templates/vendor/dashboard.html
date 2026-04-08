@@ -56,11 +56,15 @@
         <label class="form-label">Price</label>
         <input class="form-control" type="number" name="price" step="0.01" required>
       </div>
-      <div class="col-md-4">
+      <div class="col-md-2">
+        <label class="form-label">Stock</label>
+        <input class="form-control" type="number" name="stock" min="0" required>
+      </div>
+      <div class="col-md-3">
         <label class="form-label">Description</label>
         <input class="form-control" type="text" name="description">
       </div>
-      <div class="col-md-3">
+      <div class="col-md-2">
         <label class="form-label">Photo</label>
         <input class="form-control" type="file" name="photo" accept="image/*">
       </div>
@@ -87,6 +91,7 @@
                 <div class="mb-2">
                   <strong>{{ item.name }}</strong>
                   <div class="text-muted">Rs. {{ item.price }}</div>
+                  <div class="text-muted">Stock: {{ item.stock }}</div>
                 </div>
 
                 <form method="post" action="{% url 'vendor_menu_update' item.id %}" enctype="multipart/form-data">
@@ -99,6 +104,10 @@
                     <div class="col-md-4">
                       <label class="form-label">New Description</label>
                       <input class="form-control" type="text" name="description" value="{{ item.description }}">
+                    </div>
+                    <div class="col-md-2">
+                      <label class="form-label">Stock</label>
+                      <input class="form-control" type="number" name="stock" min="0" value="{{ item.stock }}">
                     </div>
                     <div class="col-md-3">
                       <label class="form-label">New Photo (optional)</label>

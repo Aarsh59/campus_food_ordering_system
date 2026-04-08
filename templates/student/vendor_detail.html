@@ -78,11 +78,10 @@
     }
 </style>
 <script>
-const MAX_CART_ITEM_QUANTITY = 20;
-
 function sanitizeQuantityInput(itemId) {
     const input = document.getElementById('qty-' + itemId);
     const rawValue = input.value.trim();
+    const maxQuantity = parseInt(input.max, 10) || 0;
 
     if (rawValue === '') {
         input.value = 0;
@@ -96,9 +95,9 @@ function sanitizeQuantityInput(itemId) {
 
     if (quantity < 0) {
         quantity = 0;
-    } else if (quantity > MAX_CART_ITEM_QUANTITY) {
-        quantity = MAX_CART_ITEM_QUANTITY;
-        alert('You can only add up to 20 of an item.');
+    } else if (maxQuantity >= 0 && quantity > maxQuantity) {
+        quantity = maxQuantity;
+        alert(`Only ${maxQuantity} of this item available right now.`);
     }
 
     input.value = quantity;
@@ -133,7 +132,8 @@ function updateQty(itemId, change) {
     const input = document.getElementById('qty-' + itemId);
     const currentQuantity = parseInt(input.value, 10) || 0;
     const nextQuantity = currentQuantity + change;
-    input.value = Math.min(MAX_CART_ITEM_QUANTITY, Math.max(0, nextQuantity));
+    const maxQuantity = parseInt(input.max, 10) || 0;
+    input.value = Math.min(maxQuantity, Math.max(0, nextQuantity));
 }
 </script>
 {% endblock %}
@@ -192,14 +192,23 @@ function updateQty(itemId, change) {
                             <div class="menu-item-description">{{ item.description|truncatewords:15 }}</div>
                         {% endif %}
                         <div class="menu-item-footer">
-                            <div class="menu-item-price">₹{{ item.price }}</div>
+                            <div>
+                                <div class="menu-item-price">₹{{ item.price }}</div>
+                                <div class="text-muted small">
+                                    {% if item.stock > 0 %}
+                                        {{ item.stock }} left
+                                    {% else %}
+                                        Out of stock
+                                    {% endif %}
+                                </div>
+                            </div>
                             <div class="quantity-selector">
-                                <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, -1)">−</button>
-                                <input type="number" id="qty-{{ item.id }}" value="{{ row.cart_quantity }}" min="0" max="20" oninput="sanitizeQuantityInput({{ item.id }})" style="width: 50px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 4px;">
-                                <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, 1)">+</button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, -1)" {% if item.stock == 0 %}disabled{% endif %}>−</button>
+                                <input type="number" id="qty-{{ item.id }}" value="{{ row.cart_quantity }}" min="0" max="{{ item.stock }}" oninput="sanitizeQuantityInput({{ item.id }})" {% if item.stock == 0 %}disabled{% endif %} style="width: 50px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 4px;">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, 1)" {% if item.stock == 0 %}disabled{% endif %}>+</button>
                             </div>
                         </div>
-                        <button class="btn btn-primary w-100 mt-3" onclick="addToCart({{ item.id }})">
+                        <button class="btn btn-primary w-100 mt-3" onclick="addToCart({{ item.id }})" {% if item.stock == 0 %}disabled{% endif %}>
                             Update Cart
                         </button>
                     </div>

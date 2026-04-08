@@ -44,8 +44,6 @@ import razorpay
 from datetime import timedelta
 from django.db.models import Q
 
-MAX_CART_ITEM_QUANTITY = 20
-
 
 def _format_retry_after_message(retry_after_seconds: int) -> str:
     if retry_after_seconds <= 1:
@@ -86,9 +84,38 @@ def _parse_cart_quantity(raw_quantity, *, allow_zero=False):
     if quantity < minimum_quantity:
         minimum_message = '0 or more' if allow_zero else 'at least 1'
         raise ValueError(f'Quantity must be {minimum_message}')
-    if quantity > MAX_CART_ITEM_QUANTITY:
-        raise ValueError(f'Quantity cannot exceed {MAX_CART_ITEM_QUANTITY}')
     return quantity
+
+
+def _parse_menu_item_stock(raw_stock):
+    """Parse and validate a vendor-supplied stock value."""
+    try:
+        stock = int(raw_stock)
+    except (TypeError, ValueError):
+        raise ValueError('Invalid stock value.')
+
+    if stock < 0:
+        raise ValueError('Stock cannot be negative.')
+    return stock
+
+
+def _validate_menu_item_quantity(menu_item, quantity):
+    """Ensure a requested quantity fits within the current stock."""
+    if quantity > menu_item.stock:
+        if menu_item.stock == 0:
+            raise ValueError(f'{menu_item.name} is currently out of stock.')
+        raise ValueError(
+            f'Only {menu_item.stock} of {menu_item.name} available right now.'
+        )
+
+
+def _restore_order_item_stock(order):
+    """Return reserved stock for an order back to its menu items."""
+    for order_item in order.items.select_related('vendor_item'):
+        if order_item.vendor_item_id:
+            menu_item = order_item.vendor_item
+            menu_item.stock += order_item.quantity
+            menu_item.save(update_fields=['stock'])
 
 
 def _cancel_pending_checkout_orders(student, cancellation_reason, order_ids=None, razorpay_order_id=None):
@@ -122,6 +149,7 @@ def _cancel_pending_checkout_orders(student, cancellation_reason, order_ids=None
         return 0
 
     for order in pending_orders:
+        _restore_order_item_stock(order)
         order.payment_status = Order.PaymentStatus.FAILED
         order.vendor_status = Order.VendorStatus.CANCELLED
         order.save(update_fields=['payment_status', 'vendor_status', 'updated_at'])
@@ -606,10 +634,11 @@ def vendor_menu_add(request):
     name = request.POST.get('name', '').strip()
     description = request.POST.get('description', '').strip()
     price_raw = request.POST.get('price', '').strip()
+    stock_raw = request.POST.get('stock', '').strip()
     photo = request.FILES.get('photo')
 
-    if not name or not price_raw:
-        messages.error(request, 'Menu item name and price are required.')
+    if not name or not price_raw or not stock_raw:
+        messages.error(request, 'Menu item name, price, and stock are required.')
         return redirect('vendor_dashboard')
 
     try:
@@ -618,11 +647,18 @@ def vendor_menu_add(request):
         messages.error(request, 'Invalid price value.')
         return redirect('vendor_dashboard')
 
+    try:
+        stock = _parse_menu_item_stock(stock_raw)
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return redirect('vendor_dashboard')
+
     MenuItem.objects.create(
         vendor=vendor_profile,
         name=name,
         description=description,
         price=price,
+        stock=stock,
         photo=photo,
     )
 
@@ -644,12 +680,20 @@ def vendor_menu_update(request, item_id: int):
     name = request.POST.get('name', item.name).strip()
     description = request.POST.get('description', item.description).strip()
     price_raw = request.POST.get('price', '').strip()
+    stock_raw = request.POST.get('stock', '').strip()
 
     if price_raw:
         try:
             item.price = Decimal(price_raw)
         except (InvalidOperation, ValueError):
             messages.error(request, 'Invalid price value.')
+            return redirect('vendor_dashboard')
+
+    if stock_raw:
+        try:
+            item.stock = _parse_menu_item_stock(stock_raw)
+        except ValueError as exc:
+            messages.error(request, str(exc))
             return redirect('vendor_dashboard')
 
     item.name = name
@@ -730,6 +774,7 @@ def vendor_ticket_reject(request, order_id: int):
     order.vendor_decision = Order.VendorDecision.REJECTED
     order.vendor_status = Order.VendorStatus.CANCELLED
     order.save()
+    _restore_order_item_stock(order)
 
     message = f"Your order {order.order_code or order.id} has been rejected by the vendor."
     _notify_user(order.student, order, message, email_subject='Order Rejected')
@@ -944,6 +989,7 @@ def student_add_to_cart(request, item_id: int):
     
     try:
         quantity = _parse_cart_quantity(quantity)
+        _validate_menu_item_quantity(menu_item, quantity)
     except ValueError as exc:
         return JsonResponse({'error': str(exc)}, status=400)
     
@@ -1017,6 +1063,7 @@ def student_update_cart_item(request, item_id: int):
         if quantity < 1:
             cart_item.delete()
         else:
+            _validate_menu_item_quantity(cart_item.menu_item, quantity)
             cart_item.quantity = quantity
             cart_item.save()
     except ValueError as exc:
@@ -1042,6 +1089,8 @@ def student_update_menu_cart_item(request, item_id: int):
     quantity = request.POST.get('quantity', '1')
     try:
         quantity = _parse_cart_quantity(quantity, allow_zero=True)
+        if quantity > 0:
+            _validate_menu_item_quantity(menu_item, quantity)
     except ValueError as exc:
         return JsonResponse({'error': str(exc)}, status=400)
 
@@ -1117,21 +1166,22 @@ def student_create_order(request):
     
     if not cart.items.exists():
         return JsonResponse({'error': 'Cart is empty'}, status=400)
-
-    invalid_cart_item = cart.items.filter(quantity__gt=MAX_CART_ITEM_QUANTITY).first()
-    if invalid_cart_item:
-        return JsonResponse({
-            'error': (
-                f'{invalid_cart_item.menu_item.name} exceeds the maximum quantity of '
-                f'{MAX_CART_ITEM_QUANTITY}. Please update your cart before checkout.'
-            )
-        }, status=400)
     
     delivery_address = request.POST.get('delivery_address', '').strip()
     if not delivery_address:
         return JsonResponse({'error': 'Delivery address is required'}, status=400)
     
-    vendor_groups = cart.get_vendor_groups()
+    cart_items = list(
+        CartItem.objects.filter(cart=cart)
+        .select_related('menu_item', 'menu_item__vendor')
+        .order_by('id')
+    )
+    for cart_item in cart_items:
+        try:
+            _validate_menu_item_quantity(cart_item.menu_item, cart_item.quantity)
+        except ValueError as exc:
+            return JsonResponse({'error': str(exc)}, status=400)
+
     total_amount = cart.get_total()
     
     # Initialize Razorpay client
@@ -1152,41 +1202,73 @@ def student_create_order(request):
     except Exception as e:
         return JsonResponse({'error': f'Failed to create payment order: {str(e)}'}, status=500)
     
-    # Create master order record with payment info
-    orders = []
-    for vendor_id, vendor_data in vendor_groups.items():
-        vendor = vendor_data['vendor']
-        vendor_total = vendor_data['total']
-        
-        order = Order.objects.create(
-            student=request.user,
-            vendor=vendor,
-            total_amount=vendor_total,
-            delivery_address=delivery_address,
-            payment_status=Order.PaymentStatus.PENDING,
+    # Create master order record with payment info and reserve stock
+    with transaction.atomic():
+        locked_cart_items = list(
+            CartItem.objects.select_for_update()
+            .filter(cart=cart)
+            .select_related('menu_item', 'menu_item__vendor')
+            .order_by('id')
         )
-        
-        # Add items to order
-        for cart_item in vendor_data['items']:
-            OrderItem.objects.create(
-                order=order,
-                vendor_item=cart_item.menu_item,
-                item_name=cart_item.menu_item.name,
-                unit_price=cart_item.menu_item.price,
-                quantity=cart_item.quantity,
+        if not locked_cart_items:
+            return JsonResponse({'error': 'Cart is empty'}, status=400)
+
+        menu_items = {
+            menu_item.id: menu_item
+            for menu_item in MenuItem.objects.select_for_update().filter(
+                id__in=[cart_item.menu_item_id for cart_item in locked_cart_items]
+            ).select_related('vendor')
+        }
+
+        grouped_items = {}
+        for cart_item in locked_cart_items:
+            menu_item = menu_items[cart_item.menu_item_id]
+            if not menu_item.is_active:
+                return JsonResponse({'error': f'{menu_item.name} is no longer available.'}, status=400)
+            try:
+                _validate_menu_item_quantity(menu_item, cart_item.quantity)
+            except ValueError as exc:
+                return JsonResponse({'error': str(exc)}, status=400)
+
+            menu_item.stock -= cart_item.quantity
+            menu_item.save(update_fields=['stock'])
+            vendor_group = grouped_items.setdefault(menu_item.vendor_id, {
+                'vendor': menu_item.vendor,
+                'items': [],
+                'total': Decimal('0.00'),
+            })
+            vendor_group['items'].append((cart_item, menu_item))
+            vendor_group['total'] += menu_item.price * cart_item.quantity
+
+        orders = []
+        for vendor_data in grouped_items.values():
+            order = Order.objects.create(
+                student=request.user,
+                vendor=vendor_data['vendor'],
+                total_amount=vendor_data['total'],
+                delivery_address=delivery_address,
+                payment_status=Order.PaymentStatus.PENDING,
             )
-        
-        orders.append(order)
-    
-    # Create payment record
-    payment = Payment.objects.create(
-        order=orders[0],  # Associate with first order for tracking
-        student=request.user,
-        razorpay_order_id=razorpay_order['id'],
-        amount=total_amount,
-        currency='INR',
-        status=Payment.PaymentStatus.PENDING,
-    )
+
+            for cart_item, menu_item in vendor_data['items']:
+                OrderItem.objects.create(
+                    order=order,
+                    vendor_item=menu_item,
+                    item_name=menu_item.name,
+                    unit_price=menu_item.price,
+                    quantity=cart_item.quantity,
+                )
+
+            orders.append(order)
+
+        Payment.objects.create(
+            order=orders[0],  # Associate with first order for tracking
+            student=request.user,
+            razorpay_order_id=razorpay_order['id'],
+            amount=total_amount,
+            currency='INR',
+            status=Payment.PaymentStatus.PENDING,
+        )
     
     return JsonResponse({
         'success': True,
@@ -1423,7 +1505,9 @@ def student_quick_reorder_from_order(request, order_id: int):
     for item in order.items.all():
         # Get the current menu item (in case it exists and is still active)
         if item.vendor_item and item.vendor_item.is_active:
-            reorder_quantity = min(item.quantity, MAX_CART_ITEM_QUANTITY)
+            reorder_quantity = min(item.quantity, item.vendor_item.stock)
+            if reorder_quantity < 1:
+                continue
             cart_item, created = CartItem.objects.get_or_create(
                 cart=cart,
                 menu_item=item.vendor_item,
@@ -1433,7 +1517,7 @@ def student_quick_reorder_from_order(request, order_id: int):
             if not created:
                 cart_item.quantity = min(
                     cart_item.quantity + item.quantity,
-                    MAX_CART_ITEM_QUANTITY,
+                    item.vendor_item.stock,
                 )
                 cart_item.save()
             
