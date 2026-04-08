@@ -262,12 +262,20 @@ class OrderItem(models.Model):
 class Notification(models.Model):
     class NotificationType(models.TextChoices):
         ORDER_UPDATE = 'ORDER_UPDATE', 'Order update'
+        STAFF_APPLICATION = 'STAFF_APPLICATION', 'Staff application'
 
     recipient = models.ForeignKey('User', on_delete=models.CASCADE, related_name='notifications')
     notification_type = models.CharField(max_length=30, choices=NotificationType.choices, default=NotificationType.ORDER_UPDATE)
 
     message = models.TextField()
     order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True, blank=True, related_name='notifications')
+    application = models.ForeignKey(
+        StaffApplication,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='notifications',
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     is_read = models.BooleanField(default=False)

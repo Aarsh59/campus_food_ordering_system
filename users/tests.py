@@ -2,6 +2,7 @@ from django.test import TestCase, Client, override_settings
 from django.urls import reverse
 from django.core import mail
 from django.core.exceptions import ValidationError
+from django.contrib.admin.sites import AdminSite
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -12,6 +13,7 @@ from .models import (
     DeliveryBroadcast, DeliveryBroadcastResponse, OrderTracking, ContactOTP
 )
 from .otp_utils import issue_otp
+from .admin import StaffApplicationAdmin
 
 
 # ─── Model Tests ──────────────────────────────────────────────────────────────
@@ -495,6 +497,65 @@ class StaffApplicationTest(TestCase):
             StaffApplication.objects.filter(email='vendor@gmail.com').exists()
         )
 
+    def test_vendor_application_notifies_admin_users(self):
+        admin_user = User.objects.create_user(
+            username='admin-reviewer',
+            email='admin@example.com',
+            password='Campus@1234',
+            phone='9999999999',
+            is_staff=True,
+            is_superuser=True,
+        )
+
+        self.client.post(self.url, {
+            'role_applied'   : 'VENDOR',
+            'full_name'      : 'Test Vendor',
+            'email'          : 'vendor.notify@gmail.com',
+            'phone'          : '9876543210',
+            'aadhaar_number' : '123456789012',
+            'outlet_name'    : 'Test Outlet',
+            'outlet_location': 'Block A',
+            'cuisine_type'   : 'Fast Food',
+            'operating_hours': '9AM - 9PM',
+            'fssai_license'  : '12345678901234',
+            **self._otp_fields(email='vendor.notify@gmail.com'),
+        })
+
+        application = StaffApplication.objects.get(email='vendor.notify@gmail.com')
+        notification = Notification.objects.get(recipient=admin_user, application=application)
+        self.assertEqual(notification.notification_type, Notification.NotificationType.STAFF_APPLICATION)
+        self.assertIn('pending review', notification.message.lower())
+
+    def test_vendor_application_emails_admin_users(self):
+        User.objects.create_user(
+            username='admin-mail',
+            email='admin-mail@example.com',
+            password='Campus@1234',
+            phone='9999999999',
+            is_staff=True,
+            is_superuser=True,
+        )
+
+        response = self.client.post(self.url, {
+            'role_applied'   : 'VENDOR',
+            'full_name'      : 'Mail Vendor',
+            'email'          : 'vendor.mail@gmail.com',
+            'phone'          : '9876543210',
+            'aadhaar_number' : '123456789012',
+            'outlet_name'    : 'Mail Outlet',
+            'outlet_location': 'Block B',
+            'cuisine_type'   : 'Snacks',
+            'operating_hours': '10AM - 8PM',
+            'fssai_license'  : '12345678901234',
+            **self._otp_fields(email='vendor.mail@gmail.com'),
+        })
+
+        self.assertRedirects(response, reverse('pending'))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('admin-mail@example.com', mail.outbox[0].to)
+        self.assertIn('pending review', mail.outbox[0].subject.lower())
+        self.assertIn('Mail Vendor', mail.outbox[0].body)
+
     def test_delivery_application_submission(self):
         response = self.client.post(self.url, {
             'role_applied'    : 'DELIVERY',
@@ -628,6 +689,30 @@ class SignalTest(TestCase):
         self.application.save()
 
         self.assertTrue(User.objects.filter(username='john1').exists())
+
+
+class StaffApplicationAdminTest(TestCase):
+
+    def setUp(self):
+        self.site = AdminSite()
+        self.admin = StaffApplicationAdmin(StaffApplication, self.site)
+        self.application = StaffApplication.objects.create(
+            full_name='Pending Vendor',
+            email='pending@vendor.com',
+            phone='9876543210',
+            role_applied='VENDOR',
+            aadhaar_number='123456789012',
+        )
+
+    def test_save_model_sets_reviewed_at_when_status_changes_from_pending(self):
+        class DummyForm:
+            changed_data = ['status']
+
+        self.application.status = StaffApplication.Status.APPROVED
+        self.admin.save_model(request=None, obj=self.application, form=DummyForm(), change=True)
+
+        self.application.refresh_from_db()
+        self.assertIsNotNone(self.application.reviewed_at)
 
 
 # ─── Model Tests for Student/Vendor/Delivery ───────────────────────────────────

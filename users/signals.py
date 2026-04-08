@@ -4,7 +4,7 @@ import logging
 import os
 import random
 import string
-from .models import StaffApplication, User, VendorProfile
+from .models import Notification, StaffApplication, User, VendorProfile
 from .username_validation import sanitize_username_seed
 from .email_utils import send_app_email
 
@@ -65,14 +65,68 @@ def _safe_send_email(subject, message, recipient_email):
     return send_app_email(subject=subject, message=message, recipient_email=recipient_email)
 
 
+def _create_admin_application_notifications(application):
+    admin_users = User.objects.filter(is_staff=True, is_active=True)
+    if not admin_users.exists():
+        return
+
+    role_label = application.get_role_applied_display()
+    message = (
+        f"New {role_label} application from {application.full_name} "
+        f"({application.email}) is pending review."
+    )
+    notifications = [
+        Notification(
+            recipient=admin_user,
+            notification_type=Notification.NotificationType.STAFF_APPLICATION,
+            message=message,
+            application=application,
+        )
+        for admin_user in admin_users
+    ]
+    Notification.objects.bulk_create(notifications)
+
+
+def _email_admins_about_application(application):
+    admin_users = User.objects.filter(
+        is_staff=True,
+        is_active=True,
+    ).exclude(email='')
+
+    if not admin_users.exists():
+        return
+
+    role_label = application.get_role_applied_display()
+    subject = f'New {role_label} application pending review'
+    message = f'''A new {role_label} application has been submitted and is pending review.
+
+Applicant: {application.full_name}
+Email: {application.email}
+Phone: {application.phone}
+Applied role: {role_label}
+Submitted at: {application.applied_at:%Y-%m-%d %H:%M:%S %Z}
+
+Please review it in the Django admin Staff Applications page.
+'''
+
+    for admin_user in admin_users:
+        _safe_send_email(
+            subject=subject,
+            message=message,
+            recipient_email=admin_user.email,
+        )
+
+
 @receiver(post_save, sender=StaffApplication)
 def handle_application_approval(sender, instance, created, **kwargs):
-    # skip brand new applications
     if created:
+        if instance.status == StaffApplication.Status.PENDING:
+            _create_admin_application_notifications(instance)
+            _email_admins_about_application(instance)
         return
 
     # ── Approved ──────────────────────────────────────────────────────────────
-    if instance.status == 'APPROVED':
+    if instance.status == StaffApplication.Status.APPROVED:
         existing_user = User.objects.filter(email=instance.email).first()
         login_url = _build_login_url()
         reset_url = _build_password_reset_url()
@@ -148,7 +202,7 @@ Campus Food Team''',
         logger.info('Account created for %s (%s)', instance.full_name, instance.role_applied)
 
     # ── Rejected ──────────────────────────────────────────────────────────────
-    elif instance.status == 'REJECTED':
+    elif instance.status == StaffApplication.Status.REJECTED:
 
         # send rejection email
         _safe_send_email(
