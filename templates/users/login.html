@@ -1,6 +1,65 @@
 {% extends 'base.html' %}
 {% block title %}Login — Campus Food{% endblock %}
 
+{% block extra_js %}
+<script>
+const loginFormStorageKey = 'campusFoodLoginFormState'
+
+function getLoginForm() {
+    return document.querySelector('form')
+}
+
+function getLoginUsernameInput() {
+    return document.querySelector('input[name="username"]')
+}
+
+function persistLoginFormState() {
+    const usernameInput = getLoginUsernameInput()
+    const payload = {
+        username: usernameInput ? usernameInput.value.trim() : '',
+    }
+
+    try {
+        window.sessionStorage.setItem(loginFormStorageKey, JSON.stringify(payload))
+    } catch (error) {
+        console.warn('Could not persist login form state.', error)
+    }
+}
+
+function restoreLoginFormState() {
+    try {
+        const raw = window.sessionStorage.getItem(loginFormStorageKey)
+        if (!raw) {
+            return
+        }
+
+        const data = JSON.parse(raw)
+        const usernameInput = getLoginUsernameInput()
+        if (usernameInput && !usernameInput.value && data.username) {
+            usernameInput.value = data.username
+        }
+    } catch (error) {
+        console.warn('Could not restore login form state.', error)
+    }
+}
+
+window.addEventListener('load', () => {
+    const form = getLoginForm()
+    const usernameInput = getLoginUsernameInput()
+
+    restoreLoginFormState()
+
+    if (usernameInput) {
+        usernameInput.addEventListener('input', persistLoginFormState)
+    }
+
+    if (form) {
+        form.addEventListener('submit', persistLoginFormState)
+    }
+})
+</script>
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-5">

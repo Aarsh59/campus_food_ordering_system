@@ -54,6 +54,8 @@
 
 {% block extra_js %}
 <script>
+const registrationFormStorageKey = 'campusFoodRegistrationFormState'
+
 function getCsrfToken() {
     return document.querySelector('[name=csrfmiddlewaretoken]').value
 }
@@ -81,8 +83,77 @@ function getOtpButton() {
     return document.getElementById('send-email-otp-btn')
 }
 
+function getRegistrationForm() {
+    return document.querySelector('form')
+}
+
+function getRegistrationFields() {
+    return {
+        username: document.querySelector('input[name="username"]'),
+        email: document.getElementById('email'),
+        phone: document.getElementById('phone'),
+        emailOtp: document.querySelector('input[name="email_otp"]'),
+    }
+}
+
 function getNormalizedEmail() {
     return getEmailInput().value.trim().toLowerCase()
+}
+
+function persistRegistrationFormState() {
+    const fields = getRegistrationFields()
+    const payload = {
+        username: fields.username ? fields.username.value : '',
+        email: fields.email ? fields.email.value : '',
+        phone: fields.phone ? fields.phone.value : '',
+        emailOtp: fields.emailOtp ? fields.emailOtp.value : '',
+        otpState: {
+            cooldownUntil: otpState.cooldownUntil,
+            cooldownEmail: otpState.cooldownEmail,
+            cooldownStatusPrefix: otpState.cooldownStatusPrefix,
+            cooldownStatusIsError: otpState.cooldownStatusIsError,
+        },
+    }
+
+    try {
+        window.sessionStorage.setItem(registrationFormStorageKey, JSON.stringify(payload))
+    } catch (error) {
+        console.warn('Could not persist registration form state.', error)
+    }
+}
+
+function restoreRegistrationFormState() {
+    try {
+        const raw = window.sessionStorage.getItem(registrationFormStorageKey)
+        if (!raw) {
+            return
+        }
+
+        const data = JSON.parse(raw)
+        const fields = getRegistrationFields()
+
+        if (fields.username && !fields.username.value && data.username) {
+            fields.username.value = data.username
+        }
+        if (fields.email && !fields.email.value && data.email) {
+            fields.email.value = data.email
+        }
+        if (fields.phone && !fields.phone.value && data.phone) {
+            fields.phone.value = data.phone
+        }
+        if (fields.emailOtp && !fields.emailOtp.value && data.emailOtp) {
+            fields.emailOtp.value = data.emailOtp
+        }
+
+        if (data.otpState && data.otpState.cooldownUntil && data.otpState.cooldownUntil > Date.now()) {
+            otpState.cooldownUntil = data.otpState.cooldownUntil
+            otpState.cooldownEmail = data.otpState.cooldownEmail || ''
+            otpState.cooldownStatusPrefix = data.otpState.cooldownStatusPrefix || ''
+            otpState.cooldownStatusIsError = Boolean(data.otpState.cooldownStatusIsError)
+        }
+    } catch (error) {
+        console.warn('Could not restore registration form state.', error)
+    }
 }
 
 function clearCooldownState() {
@@ -94,6 +165,7 @@ function clearCooldownState() {
     otpState.cooldownEmail = ''
     otpState.cooldownStatusPrefix = ''
     otpState.cooldownStatusIsError = false
+    persistRegistrationFormState()
 }
 
 function getRemainingCooldownSeconds() {
@@ -160,6 +232,7 @@ function startCooldown(seconds, email, statusPrefix, isError) {
     otpState.cooldownEmail = email
     otpState.cooldownStatusPrefix = statusPrefix
     otpState.cooldownStatusIsError = isError
+    persistRegistrationFormState()
     setOtpButtonState()
     otpState.cooldownTimerId = setInterval(() => {
         setOtpButtonState()
@@ -215,6 +288,28 @@ function sendOtp(channel) {
 
 getEmailInput().addEventListener('input', () => {
     setOtpButtonState()
+    persistRegistrationFormState()
+})
+
+window.addEventListener('load', () => {
+    const form = getRegistrationForm()
+    const fields = getRegistrationFields()
+
+    restoreRegistrationFormState()
+    setOtpButtonState()
+
+    if (fields.username) {
+        fields.username.addEventListener('input', persistRegistrationFormState)
+    }
+    if (fields.phone) {
+        fields.phone.addEventListener('input', persistRegistrationFormState)
+    }
+    if (fields.emailOtp) {
+        fields.emailOtp.addEventListener('input', persistRegistrationFormState)
+    }
+    if (form) {
+        form.addEventListener('submit', persistRegistrationFormState)
+    }
 })
 
 setOtpButtonState()

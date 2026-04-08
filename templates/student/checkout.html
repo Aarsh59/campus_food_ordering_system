@@ -90,6 +90,7 @@ const pendingCheckoutPaymentStorageKey = 'studentCheckoutPendingPayment';
 const studentCheckoutState = {
     map: null,
     marker: null,
+    autocomplete: null,
     selectedPoint: null,
     useLocationButton: null,
     addressField: null,
@@ -236,6 +237,57 @@ function resetLocationButtonState() {
     studentCheckoutState.isLocating = false;
     button.disabled = false;
     button.textContent = 'Use Current Location';
+}
+
+function getCheckoutMapDefaultPoint() {
+    return studentCheckoutState.selectedPoint || campusMapConfig.center;
+}
+
+function clearStudentDeliveryMapState() {
+    if (window.google && window.google.maps) {
+        if (studentCheckoutState.marker) {
+            google.maps.event.clearInstanceListeners(studentCheckoutState.marker);
+            studentCheckoutState.marker.setMap(null);
+        }
+        if (studentCheckoutState.map) {
+            google.maps.event.clearInstanceListeners(studentCheckoutState.map);
+        }
+    }
+
+    studentCheckoutState.map = null;
+    studentCheckoutState.marker = null;
+}
+
+function syncStudentDeliveryMapLayout(delay = 0) {
+    if (!window.google || !window.google.maps || !studentCheckoutState.map) {
+        return;
+    }
+
+    window.setTimeout(() => {
+        if (!studentCheckoutState.map || !studentCheckoutState.marker) {
+            return;
+        }
+
+        const point = getCheckoutMapDefaultPoint();
+        google.maps.event.trigger(studentCheckoutState.map, 'resize');
+        studentCheckoutState.map.setCenter(point);
+        studentCheckoutState.map.setZoom(studentCheckoutState.selectedPoint ? 18 : 16);
+        studentCheckoutState.marker.setMap(studentCheckoutState.map);
+        studentCheckoutState.marker.setPosition(point);
+    }, delay);
+}
+
+function ensureStudentDeliveryMap(forceRecreate = false) {
+    if (!window.google || !window.google.maps) {
+        return;
+    }
+
+    if (forceRecreate) {
+        clearStudentDeliveryMapState();
+    }
+
+    initStudentDeliveryMap();
+    syncStudentDeliveryMapLayout(forceRecreate ? 120 : 60);
 }
 
 function restoreCheckoutLocationUi() {
@@ -467,33 +519,33 @@ function initStudentDeliveryMap() {
         return campusBounds.contains(new google.maps.LatLng(lat, lng));
     }
 
-    if (!studentCheckoutState.map) {
-        studentCheckoutState.map = new google.maps.Map(mapEl, {
-            center: defaultCenter,
-            zoom: 16,
-            minZoom: 15,
-            mapTypeControl: false,
-            streetViewControl: false,
-            fullscreenControl: false,
-            restriction: {
-                latLngBounds: campusBounds,
-                strictBounds: true,
-            },
-        });
+    restoreCheckoutLocationUi();
 
-        studentCheckoutState.marker = new google.maps.Marker({
-            map: studentCheckoutState.map,
-            position: defaultCenter,
-            draggable: true,
-            animation: google.maps.Animation.DROP,
-        });
+    if (!studentCheckoutState.selectedPoint) {
         studentCheckoutState.selectedPoint = defaultCenter;
-    } else {
-        google.maps.event.trigger(studentCheckoutState.map, 'resize');
-        studentCheckoutState.map.setCenter(studentCheckoutState.selectedPoint || defaultCenter);
-        studentCheckoutState.map.setZoom(studentCheckoutState.selectedPoint ? 17 : 15);
-        studentCheckoutState.marker.setMap(studentCheckoutState.map);
     }
+
+    clearStudentDeliveryMapState();
+
+    studentCheckoutState.map = new google.maps.Map(mapEl, {
+        center: getCheckoutMapDefaultPoint(),
+        zoom: studentCheckoutState.selectedPoint ? 18 : 16,
+        minZoom: 15,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+        restriction: {
+            latLngBounds: campusBounds,
+            strictBounds: true,
+        },
+    });
+
+    studentCheckoutState.marker = new google.maps.Marker({
+        map: studentCheckoutState.map,
+        position: getCheckoutMapDefaultPoint(),
+        draggable: true,
+        animation: google.maps.Animation.DROP,
+    });
 
     const map = studentCheckoutState.map;
     const marker = studentCheckoutState.marker;
@@ -502,7 +554,6 @@ function initStudentDeliveryMap() {
     studentCheckoutState.previewLink = previewLink;
     studentCheckoutState.locationStatus = locationStatus;
     resetLocationButtonState();
-    restoreCheckoutLocationUi();
     refreshLocationPermissionState();
 
     function fillAddress(address, lat, lng) {
@@ -565,37 +616,34 @@ function initStudentDeliveryMap() {
         }
     }
 
-    if (!mapEl.dataset.mapListenersBound) {
-        map.addListener('click', (e) => {
-            const lat = e.latLng.lat();
-            const lng = e.latLng.lng();
-            if (setSelection(lat, lng)) {
-                reverseGeocodeAndFill(lat, lng);
-            }
-        });
+    map.addListener('click', (e) => {
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        if (setSelection(lat, lng)) {
+            reverseGeocodeAndFill(lat, lng);
+        }
+    });
 
-        marker.addListener('dragend', (e) => {
-            const lat = e.latLng.lat();
-            const lng = e.latLng.lng();
-            if (setSelection(lat, lng)) {
-                reverseGeocodeAndFill(lat, lng);
-            } else if (studentCheckoutState.selectedPoint) {
-                marker.setPosition(studentCheckoutState.selectedPoint);
-            }
-        });
-        mapEl.dataset.mapListenersBound = 'true';
-    }
+    marker.addListener('dragend', (e) => {
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        if (setSelection(lat, lng)) {
+            reverseGeocodeAndFill(lat, lng);
+        } else if (studentCheckoutState.selectedPoint) {
+            marker.setPosition(studentCheckoutState.selectedPoint);
+        }
+    });
 
     if (!addressField.dataset.autocompleteBound) {
-        const autocomplete = new google.maps.places.Autocomplete(addressField, {
+        studentCheckoutState.autocomplete = new google.maps.places.Autocomplete(addressField, {
             bounds: campusBounds,
             componentRestrictions: { country: 'in' },
             fields: ['formatted_address', 'geometry', 'name'],
             strictBounds: true,
         });
 
-        autocomplete.addListener('place_changed', () => {
-            const place = autocomplete.getPlace();
+        studentCheckoutState.autocomplete.addListener('place_changed', () => {
+            const place = studentCheckoutState.autocomplete.getPlace();
             if (!place || !place.geometry || !place.geometry.location) {
                 return;
             }
@@ -671,6 +719,8 @@ function initStudentDeliveryMap() {
         useLocationButton.classList.add('d-none');
         setLocationStatus('This browser does not support geolocation. Pick a point on the map instead.', 'danger');
     }
+
+    syncStudentDeliveryMapLayout(0);
 }
 
 window.addEventListener('pageshow', (event) => {
@@ -686,17 +736,7 @@ window.addEventListener('pageshow', (event) => {
     resetLocationButtonState();
     restoreCheckoutLocationUi();
     refreshLocationPermissionState();
-    if (window.google && window.google.maps && studentCheckoutState.map) {
-        window.setTimeout(() => {
-            google.maps.event.trigger(studentCheckoutState.map, 'resize');
-            const point = studentCheckoutState.selectedPoint || campusMapConfig.center;
-            studentCheckoutState.map.setCenter(point);
-            if (studentCheckoutState.marker) {
-                studentCheckoutState.marker.setMap(studentCheckoutState.map);
-                studentCheckoutState.marker.setPosition(point);
-            }
-        }, event.persisted ? 0 : 50);
-    }
+    ensureStudentDeliveryMap(event.persisted || navType === 'reload' || navType === 'back_forward');
 });
 
 window.addEventListener('load', () => {
@@ -712,6 +752,7 @@ window.addEventListener('load', () => {
     resetLocationButtonState();
     restoreCheckoutLocationUi();
     refreshLocationPermissionState();
+    ensureStudentDeliveryMap(false);
 });
 
 document.addEventListener('visibilitychange', () => {
@@ -719,13 +760,9 @@ document.addEventListener('visibilitychange', () => {
         return;
     }
     resetLocationButtonState();
+    restoreCheckoutLocationUi();
     refreshLocationPermissionState();
-    if (window.google && window.google.maps && studentCheckoutState.map) {
-        window.setTimeout(() => {
-            google.maps.event.trigger(studentCheckoutState.map, 'resize');
-            studentCheckoutState.map.setCenter(studentCheckoutState.selectedPoint || campusMapConfig.center);
-        }, 50);
-    }
+    ensureStudentDeliveryMap(true);
 });
 {% endif %}
 </script>

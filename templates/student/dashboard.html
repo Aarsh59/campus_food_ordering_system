@@ -55,120 +55,7 @@
         transform: translateY(-5px);
         box-shadow: 0 8px 24px rgba(0,0,0,0.15);
     }
-    .dashboard-map {
-        height: 360px;
-        width: 100%;
-        border-radius: 12px;
-        overflow: hidden;
-        background: linear-gradient(135deg, #eef6ff 0%, #f7efe4 100%);
-        border: 1px solid #dce6f2;
-    }
 </style>
-{% if google_maps_api_key %}
-<script>
-const studentDashboardMapConfig = {{ campus_map_config_json|safe }};
-const studentDashboardVendorLocations = {{ vendor_map_locations_json|safe }};
-const studentDashboardMapState = {
-    map: null,
-    infoWindow: null,
-    markers: [],
-};
-
-function initStudentDashboardMap() {
-    const mapEl = document.getElementById('studentDashboardMap');
-    if (!mapEl || !window.google) {
-        return;
-    }
-
-    const campusBounds = new google.maps.LatLngBounds(
-        { lat: studentDashboardMapConfig.bounds.south, lng: studentDashboardMapConfig.bounds.west },
-        { lat: studentDashboardMapConfig.bounds.north, lng: studentDashboardMapConfig.bounds.east }
-    );
-
-    if (!studentDashboardMapState.map) {
-        studentDashboardMapState.map = new google.maps.Map(mapEl, {
-            center: studentDashboardMapConfig.center,
-            zoom: 15,
-            minZoom: 14,
-            mapTypeControl: false,
-            streetViewControl: false,
-            fullscreenControl: false,
-            restriction: {
-                latLngBounds: campusBounds,
-                strictBounds: true,
-            },
-        });
-        studentDashboardMapState.infoWindow = new google.maps.InfoWindow();
-    } else {
-        google.maps.event.trigger(studentDashboardMapState.map, 'resize');
-        studentDashboardMapState.map.setCenter(studentDashboardMapConfig.center);
-    }
-
-    const map = studentDashboardMapState.map;
-    const infoWindow = studentDashboardMapState.infoWindow;
-
-    studentDashboardMapState.markers.forEach((marker) => marker.setMap(null));
-    studentDashboardMapState.markers = [];
-
-    const bounds = new google.maps.LatLngBounds();
-    let hasMarkers = false;
-
-    studentDashboardVendorLocations.forEach((vendor) => {
-        if (typeof vendor.lat !== 'number' || typeof vendor.lng !== 'number') {
-            return;
-        }
-
-        const marker = new google.maps.Marker({
-            map: map,
-            position: { lat: vendor.lat, lng: vendor.lng },
-            title: vendor.name,
-            icon: 'http://maps.google.com/mapfiles/ms/icons/orange-dot.png',
-        });
-
-        marker.addListener('click', () => {
-            const detailsUrl = `/users/student/vendor/${vendor.id}/`;
-            infoWindow.setContent(`
-                <div style="min-width:220px">
-                    <strong>${vendor.name}</strong><br>
-                    <small>${vendor.address}</small><br>
-                    <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-                        <a href="${detailsUrl}" class="btn btn-sm btn-primary">View Menu</a>
-                        <a href="${vendor.maps_link}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary">Open Map</a>
-                    </div>
-                </div>
-            `);
-            infoWindow.open({ anchor: marker, map: map });
-        });
-
-        studentDashboardMapState.markers.push(marker);
-        bounds.extend(marker.getPosition());
-        hasMarkers = true;
-    });
-
-    if (hasMarkers) {
-        map.fitBounds(bounds, 60);
-        if (studentDashboardVendorLocations.length === 1) {
-            map.setZoom(17);
-        }
-    } else {
-        map.setCenter(studentDashboardMapConfig.center);
-        map.setZoom(15);
-    }
-}
-
-window.addEventListener('pageshow', () => {
-    if (window.google && window.google.maps && studentDashboardMapState.map) {
-        window.setTimeout(initStudentDashboardMap, 50);
-    }
-});
-
-document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && window.google && window.google.maps && studentDashboardMapState.map) {
-        window.setTimeout(initStudentDashboardMap, 50);
-    }
-});
-</script>
-{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -204,19 +91,6 @@ document.addEventListener('visibilitychange', () => {
         </div>
     </div>
 </div>
-
-{% if google_maps_api_key %}
-<div class="card mb-4">
-    <div class="card-header bg-primary text-white">
-        <h5 class="mb-0">Campus Vendor Map</h5>
-    </div>
-    <div class="card-body">
-        <p class="text-muted mb-3">Explore saved vendor outlet locations across campus.</p>
-        <div id="studentDashboardMap" class="dashboard-map"></div>
-        <small class="text-muted d-block mt-2">Click a marker to open the vendor menu or directions.</small>
-    </div>
-</div>
-{% endif %}
 
 <!-- Navigation Tabs -->
 <ul class="nav nav-tabs mb-4" role="tablist">
@@ -371,11 +245,4 @@ document.addEventListener('visibilitychange', () => {
         </div>
     </div>
 </div>
-
-{% if google_maps_api_key %}
-<script async defer
-  src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&callback=initStudentDashboardMap">
-</script>
-{% endif %}
-
 {% endblock %}
