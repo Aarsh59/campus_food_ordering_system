@@ -79,6 +79,29 @@
     }
 </style>
 <script>
+const MAX_CART_ITEM_QUANTITY = 20;
+
+function sanitizeQuantityInput(itemId) {
+    const input = document.getElementById('qty-' + itemId);
+    const rawValue = input.value.trim();
+
+    if (rawValue === '') {
+        input.value = 1;
+        return 1;
+    }
+
+    let quantity = parseInt(rawValue, 10);
+    if (Number.isNaN(quantity) || quantity < 1) {
+        quantity = 1;
+    } else if (quantity > MAX_CART_ITEM_QUANTITY) {
+        quantity = MAX_CART_ITEM_QUANTITY;
+        alert('You can only order up to 20 of an item.');
+    }
+
+    input.value = quantity;
+    return quantity;
+}
+
 function removeFromCart(itemId) {
     if (confirm('Remove this item from cart?')) {
         const form = new FormData();
@@ -99,7 +122,7 @@ function removeFromCart(itemId) {
 }
 
 function updateQuantity(itemId) {
-    const qty = document.getElementById('qty-' + itemId).value;
+    const qty = sanitizeQuantityInput(itemId);
     const form = new FormData();
     form.append('quantity', qty);
     
@@ -143,7 +166,7 @@ function updateQuantity(itemId) {
                             </div>
                             <div class="item-actions">
                                 <div>
-                                    <input type="number" id="qty-{{ cart_item.id }}" value="{{ cart_item.quantity }}" min="1" max="20" onchange="updateQuantity({{ cart_item.id }})" style="width: 60px; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+                                    <input type="number" id="qty-{{ cart_item.id }}" value="{{ cart_item.quantity }}" min="1" max="20" oninput="sanitizeQuantityInput({{ cart_item.id }})" onchange="updateQuantity({{ cart_item.id }})" style="width: 60px; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
                                 </div>
                                 <div style="font-weight: bold; color: #ff6b00; min-width: 80px; text-align: right;">
                                     ₹{{ cart_item.get_subtotal }}

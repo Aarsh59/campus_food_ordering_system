@@ -999,6 +999,15 @@ class StudentCartTest(TestCase):
         cart_item = CartItem.objects.get(cart=cart, menu_item=self.menu_item)
         self.assertEqual(cart_item.quantity, 2)
 
+    def test_add_to_cart_rejects_quantity_above_limit(self):
+        response = self.client.post(reverse('student_add_to_cart', args=[self.menu_item.id]), {
+            'quantity': 21
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'Quantity cannot exceed 20')
+        self.assertFalse(CartItem.objects.filter(menu_item=self.menu_item, cart__student=self.student).exists())
+
     def test_view_cart(self):
         cart = Cart.objects.create(student=self.student)
         CartItem.objects.create(cart=cart, menu_item=self.menu_item, quantity=1)
@@ -1027,6 +1036,19 @@ class StudentCartTest(TestCase):
         self.assertTrue(data['success'])
         cart_item.refresh_from_db()
         self.assertEqual(cart_item.quantity, 3)
+
+    def test_update_cart_item_rejects_quantity_above_limit(self):
+        cart = Cart.objects.create(student=self.student)
+        cart_item = CartItem.objects.create(cart=cart, menu_item=self.menu_item, quantity=1)
+
+        response = self.client.post(reverse('student_update_cart_item', args=[cart_item.id]), {
+            'quantity': 21
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'Quantity cannot exceed 20')
+        cart_item.refresh_from_db()
+        self.assertEqual(cart_item.quantity, 1)
 
     def test_update_menu_cart_item_zero_removes_item(self):
         cart = Cart.objects.create(student=self.student)
@@ -1062,6 +1084,15 @@ class StudentCartTest(TestCase):
         self.assertEqual(response.status_code, 200)
         cart_item.refresh_from_db()
         self.assertEqual(cart_item.quantity, 2)
+
+    def test_update_menu_cart_item_rejects_quantity_above_limit(self):
+        response = self.client.post(reverse('student_update_menu_cart_item', args=[self.menu_item.id]), {
+            'quantity': 21
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'Quantity cannot exceed 20')
+        self.assertFalse(CartItem.objects.filter(cart__student=self.student, menu_item=self.menu_item).exists())
 
 
 class StudentCheckoutTest(TestCase):
@@ -1130,6 +1161,20 @@ class StudentCheckoutTest(TestCase):
         self.assertEqual(stale_order.vendor_status, Order.VendorStatus.CANCELLED)
         self.assertEqual(stale_payment.status, Payment.PaymentStatus.CANCELLED)
 
+    @patch('users.views.razorpay.Client')
+    def test_create_order_rejects_cart_items_above_limit(self, mock_razorpay_client):
+        cart_item = CartItem.objects.get(cart=self.cart, menu_item=self.menu_item)
+        cart_item.quantity = 21
+        cart_item.save()
+
+        response = self.client.post(reverse('student_create_order'), {
+            'delivery_address': 'Hall 1'
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('exceeds the maximum quantity of 20', response.json()['error'])
+        mock_razorpay_client.assert_not_called()
+
 
 class StudentOrdersTest(TestCase):
 
@@ -1170,6 +1215,32 @@ class StudentOrdersTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'student/order_detail.html')
         self.assertContains(response, self.order.order_code)
+
+    def test_quick_reorder_caps_quantity_at_twenty(self):
+        delivered_order = Order.objects.create(
+            student=self.student,
+            vendor=self.vendor_profile,
+            total_amount=Decimal('300.00'),
+            delivery_status=Order.DeliveryStatus.DELIVERED,
+        )
+        OrderItem.objects.create(
+            order=delivered_order,
+            vendor_item=MenuItem.objects.create(
+                vendor=self.vendor_profile,
+                name='Loaded Fries',
+                price=Decimal('150.00')
+            ),
+            item_name='Loaded Fries',
+            unit_price=Decimal('150.00'),
+            quantity=25,
+        )
+
+        response = self.client.post(reverse('student_quick_reorder_from_order', args=[delivered_order.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['success'])
+        cart_item = CartItem.objects.get(cart__student=self.student, menu_item__name='Loaded Fries')
+        self.assertEqual(cart_item.quantity, 20)
 
 
 # ─── Vendor Module Tests ──────────────────────────────────────────────────────

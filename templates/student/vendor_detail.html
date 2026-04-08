@@ -78,8 +78,35 @@
     }
 </style>
 <script>
+const MAX_CART_ITEM_QUANTITY = 20;
+
+function sanitizeQuantityInput(itemId) {
+    const input = document.getElementById('qty-' + itemId);
+    const rawValue = input.value.trim();
+
+    if (rawValue === '') {
+        input.value = 0;
+        return 0;
+    }
+
+    let quantity = parseInt(rawValue, 10);
+    if (Number.isNaN(quantity)) {
+        quantity = 0;
+    }
+
+    if (quantity < 0) {
+        quantity = 0;
+    } else if (quantity > MAX_CART_ITEM_QUANTITY) {
+        quantity = MAX_CART_ITEM_QUANTITY;
+        alert('You can only add up to 20 of an item.');
+    }
+
+    input.value = quantity;
+    return quantity;
+}
+
 function addToCart(itemId) {
-    const qty = document.getElementById('qty-' + itemId).value;
+    const qty = sanitizeQuantityInput(itemId);
     const form = new FormData();
     form.append('quantity', qty);
     
@@ -106,7 +133,7 @@ function updateQty(itemId, change) {
     const input = document.getElementById('qty-' + itemId);
     const currentQuantity = parseInt(input.value, 10) || 0;
     const nextQuantity = currentQuantity + change;
-    input.value = Math.max(0, nextQuantity);
+    input.value = Math.min(MAX_CART_ITEM_QUANTITY, Math.max(0, nextQuantity));
 }
 </script>
 {% endblock %}
@@ -168,7 +195,7 @@ function updateQty(itemId, change) {
                             <div class="menu-item-price">₹{{ item.price }}</div>
                             <div class="quantity-selector">
                                 <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, -1)">−</button>
-                                <input type="number" id="qty-{{ item.id }}" value="{{ row.cart_quantity }}" min="0" max="20" style="width: 50px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 4px;">
+                                <input type="number" id="qty-{{ item.id }}" value="{{ row.cart_quantity }}" min="0" max="20" oninput="sanitizeQuantityInput({{ item.id }})" style="width: 50px; text-align: center; border: 1px solid #ddd; border-radius: 4px; padding: 4px;">
                                 <button class="btn btn-sm btn-outline-secondary" onclick="updateQty({{ item.id }}, 1)">+</button>
                             </div>
                         </div>

@@ -44,6 +44,8 @@ import razorpay
 from datetime import timedelta
 from django.db.models import Q
 
+MAX_CART_ITEM_QUANTITY = 20
+
 
 def _format_retry_after_message(retry_after_seconds: int) -> str:
     if retry_after_seconds <= 1:
@@ -71,6 +73,22 @@ def _dashboard_route_name_for_user(user):
     if user.role == User.Role.DELIVERY:
         return 'delivery_dashboard'
     return 'login'
+
+
+def _parse_cart_quantity(raw_quantity, *, allow_zero=False):
+    """Parse and validate a cart quantity sent by the client."""
+    try:
+        quantity = int(raw_quantity)
+    except (TypeError, ValueError):
+        raise ValueError('Invalid quantity')
+
+    minimum_quantity = 0 if allow_zero else 1
+    if quantity < minimum_quantity:
+        minimum_message = '0 or more' if allow_zero else 'at least 1'
+        raise ValueError(f'Quantity must be {minimum_message}')
+    if quantity > MAX_CART_ITEM_QUANTITY:
+        raise ValueError(f'Quantity cannot exceed {MAX_CART_ITEM_QUANTITY}')
+    return quantity
 
 
 def _cancel_pending_checkout_orders(student, cancellation_reason, order_ids=None, razorpay_order_id=None):
@@ -925,11 +943,9 @@ def student_add_to_cart(request, item_id: int):
     quantity = request.POST.get('quantity', '1')
     
     try:
-        quantity = int(quantity)
-        if quantity < 1:
-            return JsonResponse({'error': 'Quantity must be at least 1'}, status=400)
-    except ValueError:
-        return JsonResponse({'error': 'Invalid quantity'}, status=400)
+        quantity = _parse_cart_quantity(quantity)
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
     
     cart, _ = Cart.objects.get_or_create(student=request.user)
     cart_item, created = CartItem.objects.get_or_create(
@@ -997,14 +1013,14 @@ def student_update_cart_item(request, item_id: int):
     
     quantity = request.POST.get('quantity', '1')
     try:
-        quantity = int(quantity)
+        quantity = _parse_cart_quantity(quantity, allow_zero=True)
         if quantity < 1:
             cart_item.delete()
         else:
             cart_item.quantity = quantity
             cart_item.save()
-    except ValueError:
-        return JsonResponse({'error': 'Invalid quantity'}, status=400)
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
     
     return JsonResponse({
         'success': True,
@@ -1025,9 +1041,9 @@ def student_update_menu_cart_item(request, item_id: int):
 
     quantity = request.POST.get('quantity', '1')
     try:
-        quantity = int(quantity)
-    except ValueError:
-        return JsonResponse({'error': 'Invalid quantity'}, status=400)
+        quantity = _parse_cart_quantity(quantity, allow_zero=True)
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
 
     cart_item = CartItem.objects.filter(cart=cart, menu_item=menu_item).first()
     if quantity < 1:
@@ -1101,6 +1117,15 @@ def student_create_order(request):
     
     if not cart.items.exists():
         return JsonResponse({'error': 'Cart is empty'}, status=400)
+
+    invalid_cart_item = cart.items.filter(quantity__gt=MAX_CART_ITEM_QUANTITY).first()
+    if invalid_cart_item:
+        return JsonResponse({
+            'error': (
+                f'{invalid_cart_item.menu_item.name} exceeds the maximum quantity of '
+                f'{MAX_CART_ITEM_QUANTITY}. Please update your cart before checkout.'
+            )
+        }, status=400)
     
     delivery_address = request.POST.get('delivery_address', '').strip()
     if not delivery_address:
@@ -1398,14 +1423,18 @@ def student_quick_reorder_from_order(request, order_id: int):
     for item in order.items.all():
         # Get the current menu item (in case it exists and is still active)
         if item.vendor_item and item.vendor_item.is_active:
+            reorder_quantity = min(item.quantity, MAX_CART_ITEM_QUANTITY)
             cart_item, created = CartItem.objects.get_or_create(
                 cart=cart,
                 menu_item=item.vendor_item,
-                defaults={'quantity': item.quantity}
+                defaults={'quantity': reorder_quantity}
             )
             
             if not created:
-                cart_item.quantity += item.quantity
+                cart_item.quantity = min(
+                    cart_item.quantity + item.quantity,
+                    MAX_CART_ITEM_QUANTITY,
+                )
                 cart_item.save()
             
             items_count += 1
