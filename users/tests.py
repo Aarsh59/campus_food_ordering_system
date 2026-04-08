@@ -1,4 +1,4 @@
-from django.test import TestCase, Client
+from django.test import TestCase, Client, override_settings
 from django.urls import reverse
 from django.core import mail
 from django.core.exceptions import ValidationError
@@ -245,6 +245,13 @@ class LoginViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'users/login.html')
 
+    def test_authenticated_user_visiting_login_redirects_to_dashboard(self):
+        self.client.login(username='student1', password='Campus@1234')
+
+        response = self.client.get(self.url)
+
+        self.assertRedirects(response, reverse('student_dashboard'))
+
     def test_student_login_redirects_to_student_dashboard(self):
         response = self.client.post(self.url, {
             'username': 'student1',
@@ -301,8 +308,59 @@ class LogoutViewTest(TestCase):
     def test_user_is_logged_out_after_logout(self):
         self.client.get(reverse('logout'))
         response = self.client.get(reverse('student_dashboard'))
-        # should redirect to login since user is logged out
-        self.assertEqual(response.status_code, 200)
+        self.assertRedirects(response, f"{reverse('login')}?next={reverse('student_dashboard')}")
+
+
+class HomeViewTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.home_url = reverse('home')
+        self.student = User.objects.create_user(
+            username='student-home',
+            password='Campus@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+
+    def test_home_redirects_anonymous_user_to_login(self):
+        response = self.client.get(self.home_url)
+
+        self.assertRedirects(response, reverse('login'))
+
+    def test_home_redirects_authenticated_user_to_dashboard(self):
+        self.client.login(username='student-home', password='Campus@1234')
+
+        response = self.client.get(self.home_url)
+
+        self.assertRedirects(response, reverse('student_dashboard'))
+
+
+class SessionInactivityTimeoutTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(
+            username='idle-student',
+            password='Campus@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+
+    @override_settings(SESSION_COOKIE_AGE=5, SESSION_INACTIVITY_TIMEOUT=5)
+    def test_session_expires_after_inactivity_timeout(self):
+        self.client.login(username='idle-student', password='Campus@1234')
+        session = self.client.session
+        session['_last_activity_ts'] = int((timezone.now() - timedelta(seconds=10)).timestamp())
+        session.save()
+
+        response = self.client.get(reverse('student_dashboard'), follow=True)
+
+        self.assertRedirects(response, reverse('login'))
+        messages_list = list(response.context['messages'])
+        self.assertTrue(
+            any('logged out due to inactivity' in str(message).lower() for message in messages_list)
+        )
 
 
 # ─── Staff Application Tests ──────────────────────────────────────────────────

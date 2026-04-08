@@ -87,6 +87,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'users.middleware.InactivityTimeoutMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
@@ -216,7 +217,11 @@ OTP_EXPIRY_MINUTES = int(_env_value('OTP_EXPIRY_MINUTES', default='10'))
 OTP_MAX_ATTEMPTS = int(_env_value('OTP_MAX_ATTEMPTS', default='5'))
 # ─── Default PK ───────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-SESSION_COOKIE_AGE = 3600  # 1 hour
+LOGIN_URL = '/login/'
+SESSION_COOKIE_AGE = int(_env_value('SESSION_COOKIE_AGE', default='3600'))  # 1 hour
+SESSION_INACTIVITY_TIMEOUT = int(
+    _env_value('SESSION_INACTIVITY_TIMEOUT', default=str(SESSION_COOKIE_AGE))
+)
 SESSION_SAVE_EVERY_REQUEST = True
 
 if not DEBUG:

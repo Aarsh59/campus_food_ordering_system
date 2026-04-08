@@ -44,6 +44,26 @@ from datetime import timedelta
 from django.db.models import Q
 
 
+def _dashboard_route_name_for_user(user):
+    if user.role == User.Role.STUDENT:
+        return 'student_dashboard'
+    if user.role == User.Role.VENDOR:
+        return 'vendor_dashboard'
+    if user.role == User.Role.DELIVERY:
+        return 'delivery_dashboard'
+    return 'login'
+
+
+def redirect_authenticated_user(user):
+    return redirect(_dashboard_route_name_for_user(user))
+
+
+def home_view(request):
+    if request.user.is_authenticated:
+        return redirect_authenticated_user(request.user)
+    return redirect('login')
+
+
 def _generate_google_maps_link_from_address(address: str) -> tuple[str, str]:
     """
     Convert a free-form address into a Google Maps link using Geocoding API.
@@ -221,6 +241,9 @@ def register_view(request):
 
 # ─── Login ────────────────────────────────────────────────────────────────────
 def login_view(request):
+    if request.user.is_authenticated:
+        return redirect_authenticated_user(request.user)
+
     if request.method == 'POST':
         username = request.POST.get('username')
         password = request.POST.get('password')
@@ -229,12 +252,8 @@ def login_view(request):
 
         if user is not None:
             login(request, user)
-            if user.role == User.Role.STUDENT:
-                return redirect('student_dashboard')
-            elif user.role == User.Role.VENDOR:
-                return redirect('vendor_dashboard')
-            elif user.role == User.Role.DELIVERY:
-                return redirect('delivery_dashboard')
+            request.session.set_expiry(getattr(settings, 'SESSION_INACTIVITY_TIMEOUT', settings.SESSION_COOKIE_AGE))
+            return redirect_authenticated_user(user)
         else:
             messages.error(request, 'Invalid username or password')
 
