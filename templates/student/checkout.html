@@ -85,13 +85,146 @@
 </style>
 <script>
 const campusMapConfig = {{ campus_map_config_json|safe }};
+const checkoutLocationStorageKey = 'studentCheckoutLocationState';
+const pendingCheckoutPaymentStorageKey = 'studentCheckoutPendingPayment';
 const studentCheckoutState = {
     map: null,
     marker: null,
     selectedPoint: null,
     useLocationButton: null,
+    addressField: null,
+    previewLink: null,
+    locationStatus: null,
     isLocating: false,
+    pendingCheckoutRecovery: null,
 };
+
+function getPendingCheckoutPaymentSession() {
+    try {
+        const raw = window.sessionStorage.getItem(pendingCheckoutPaymentStorageKey);
+        if (!raw) {
+            return null;
+        }
+        return JSON.parse(raw);
+    } catch (error) {
+        console.warn('Could not restore pending checkout payment state.', error);
+        return null;
+    }
+}
+
+function persistPendingCheckoutPaymentSession(data) {
+    try {
+        window.sessionStorage.setItem(
+            pendingCheckoutPaymentStorageKey,
+            JSON.stringify({
+                razorpay_order_id: data.razorpay_order_id,
+                orders: data.orders || [],
+                created_at: Date.now(),
+            })
+        );
+    } catch (error) {
+        console.warn('Could not persist pending checkout payment state.', error);
+    }
+}
+
+function clearPendingCheckoutPaymentSession() {
+    try {
+        window.sessionStorage.removeItem(pendingCheckoutPaymentStorageKey);
+    } catch (error) {
+        console.warn('Could not clear pending checkout payment state.', error);
+    }
+}
+
+function getNavigationEntryType() {
+    const entries = window.performance && window.performance.getEntriesByType
+        ? window.performance.getEntriesByType('navigation')
+        : [];
+    return entries.length ? entries[0].type : '';
+}
+
+async function recoverPendingCheckoutSession(reason) {
+    if (studentCheckoutState.pendingCheckoutRecovery) {
+        return studentCheckoutState.pendingCheckoutRecovery;
+    }
+
+    const pendingSession = getPendingCheckoutPaymentSession();
+    if (!pendingSession || !pendingSession.razorpay_order_id || !Array.isArray(pendingSession.orders) || !pendingSession.orders.length) {
+        clearPendingCheckoutPaymentSession();
+        return false;
+    }
+
+    studentCheckoutState.pendingCheckoutRecovery = fetch('{% url "student_cancel_payment" %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCsrfToken(),
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            razorpay_order_id: pendingSession.razorpay_order_id,
+            order_ids: pendingSession.orders,
+            reason: reason || 'Checkout page was reloaded before payment completion',
+        })
+    })
+    .then(() => {
+        clearPendingCheckoutPaymentSession();
+        window.location.href = '{% url "student_view_cart" %}';
+        return true;
+    })
+    .catch((error) => {
+        console.warn('Could not recover pending checkout session.', error);
+        clearPendingCheckoutPaymentSession();
+        window.location.href = '{% url "student_view_cart" %}';
+        return true;
+    })
+    .finally(() => {
+        studentCheckoutState.pendingCheckoutRecovery = null;
+    });
+
+    return studentCheckoutState.pendingCheckoutRecovery;
+}
+
+function getStoredCheckoutLocationState() {
+    try {
+        const raw = window.sessionStorage.getItem(checkoutLocationStorageKey);
+        if (!raw) {
+            return null;
+        }
+        return JSON.parse(raw);
+    } catch (error) {
+        console.warn('Could not restore checkout location state.', error);
+        return null;
+    }
+}
+
+function persistCheckoutLocationState() {
+    const addressField = studentCheckoutState.addressField || document.getElementById('delivery-address');
+    const preview = studentCheckoutState.previewLink || document.getElementById('delivery-map-preview');
+    const payload = {
+        address: addressField ? addressField.value.trim() : '',
+        selectedPoint: studentCheckoutState.selectedPoint,
+        previewHref: preview && !preview.classList.contains('d-none') ? preview.href : '',
+    };
+
+    try {
+        window.sessionStorage.setItem(checkoutLocationStorageKey, JSON.stringify(payload));
+    } catch (error) {
+        console.warn('Could not persist checkout location state.', error);
+    }
+}
+
+function setLocationStatus(message, variant = 'muted') {
+    const statusEl = studentCheckoutState.locationStatus || document.getElementById('checkout-location-status');
+    if (!statusEl) {
+        return;
+    }
+
+    studentCheckoutState.locationStatus = statusEl;
+    statusEl.textContent = message;
+    statusEl.classList.remove('text-muted', 'text-danger', 'text-success');
+    statusEl.classList.add(
+        variant === 'danger' ? 'text-danger' : variant === 'success' ? 'text-success' : 'text-muted'
+    );
+}
 
 function resetLocationButtonState() {
     const button = studentCheckoutState.useLocationButton || document.getElementById('use-current-location');
@@ -103,6 +236,75 @@ function resetLocationButtonState() {
     studentCheckoutState.isLocating = false;
     button.disabled = false;
     button.textContent = 'Use Current Location';
+}
+
+function restoreCheckoutLocationUi() {
+    const storedState = getStoredCheckoutLocationState();
+    const addressField = studentCheckoutState.addressField || document.getElementById('delivery-address');
+    const preview = studentCheckoutState.previewLink || document.getElementById('delivery-map-preview');
+
+    if (!storedState) {
+        if (addressField && addressField.value.trim()) {
+            persistCheckoutLocationState();
+        }
+        return;
+    }
+
+    if (addressField && !addressField.value.trim() && storedState.address) {
+        addressField.value = storedState.address;
+    }
+
+    if (preview && storedState.previewHref) {
+        preview.href = storedState.previewHref;
+        preview.classList.remove('d-none');
+    }
+
+    if (storedState.selectedPoint && typeof storedState.selectedPoint.lat === 'number' && typeof storedState.selectedPoint.lng === 'number') {
+        studentCheckoutState.selectedPoint = storedState.selectedPoint;
+    }
+}
+
+async function refreshLocationPermissionState() {
+    const button = studentCheckoutState.useLocationButton || document.getElementById('use-current-location');
+    if (!button || !navigator.geolocation) {
+        return;
+    }
+
+    if (!window.isSecureContext) {
+        button.disabled = true;
+        button.textContent = 'Location Needs HTTPS';
+        setLocationStatus('Current location works only on HTTPS or localhost.', 'danger');
+        return;
+    }
+
+    if (!navigator.permissions || !navigator.permissions.query) {
+        setLocationStatus('Use your current location or pick a point on the map.', 'muted');
+        return;
+    }
+
+    try {
+        const permission = await navigator.permissions.query({ name: 'geolocation' });
+        const applyPermissionState = () => {
+            if (!studentCheckoutState.isLocating) {
+                resetLocationButtonState();
+            }
+            if (permission.state === 'granted') {
+                setLocationStatus('Location access is ready.', 'success');
+            } else if (permission.state === 'prompt') {
+                setLocationStatus('Click "Use Current Location" to allow location access again.', 'muted');
+            } else {
+                setLocationStatus('Location access is blocked in your browser. Re-enable it and try again.', 'danger');
+            }
+        };
+
+        applyPermissionState();
+        permission.onchange = () => {
+            applyPermissionState();
+        };
+    } catch (error) {
+        console.warn('Could not read geolocation permission state.', error);
+        setLocationStatus('Use your current location or pick a point on the map.', 'muted');
+    }
 }
 
 function createOrder() {
@@ -125,6 +327,7 @@ function createOrder() {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
+            persistPendingCheckoutPaymentSession(data);
             initiatePayment(data);
         } else {
             alert('Error: ' + data.error);
@@ -202,6 +405,7 @@ function verifyPayment(response, orderData) {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
+            clearPendingCheckoutPaymentSession();
             alert('Payment successful! Redirecting to your orders...');
             window.location.href = '{% url "student_orders" %}';
         } else {
@@ -232,6 +436,7 @@ function cancelPendingPayment(data, reason) {
             alert('Payment was not completed, but the order could not be cancelled automatically: ' + cancelData.error);
             return;
         }
+        clearPendingCheckoutPaymentSession();
         alert(reason + '. Your pending order has been cancelled.');
         window.location.href = '{% url "student_view_cart" %}';
     })
@@ -245,6 +450,8 @@ function initStudentDeliveryMap() {
     const mapEl = document.getElementById('studentDeliveryMap');
     const addressField = document.getElementById('delivery-address');
     const useLocationButton = document.getElementById('use-current-location');
+    const previewLink = document.getElementById('delivery-map-preview');
+    const locationStatus = document.getElementById('checkout-location-status');
 
     if (!mapEl || !addressField || !window.google) {
         return;
@@ -291,15 +498,20 @@ function initStudentDeliveryMap() {
     const map = studentCheckoutState.map;
     const marker = studentCheckoutState.marker;
     studentCheckoutState.useLocationButton = useLocationButton;
+    studentCheckoutState.addressField = addressField;
+    studentCheckoutState.previewLink = previewLink;
+    studentCheckoutState.locationStatus = locationStatus;
     resetLocationButtonState();
+    restoreCheckoutLocationUi();
+    refreshLocationPermissionState();
 
     function fillAddress(address, lat, lng) {
         addressField.value = address || '';
-        const preview = document.getElementById('delivery-map-preview');
-        if (preview) {
-            preview.href = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
-            preview.classList.remove('d-none');
+        if (previewLink) {
+            previewLink.href = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+            previewLink.classList.remove('d-none');
         }
+        persistCheckoutLocationState();
     }
 
     async function reverseGeocodeAndFill(lat, lng) {
@@ -325,6 +537,7 @@ function initStudentDeliveryMap() {
         }
 
         fillAddress(data.address || '', lat, lng);
+        setLocationStatus('Location selected successfully.', 'success');
     }
 
     function setSelection(lat, lng) {
@@ -338,7 +551,18 @@ function initStudentDeliveryMap() {
         marker.setPosition(point);
         map.setCenter(point);
         map.setZoom(18);
+        persistCheckoutLocationState();
         return true;
+    }
+
+    if (studentCheckoutState.selectedPoint) {
+        marker.setPosition(studentCheckoutState.selectedPoint);
+        map.setCenter(studentCheckoutState.selectedPoint);
+        map.setZoom(18);
+        if (previewLink) {
+            previewLink.href = `https://www.google.com/maps/search/?api=1&query=${studentCheckoutState.selectedPoint.lat},${studentCheckoutState.selectedPoint.lng}`;
+            previewLink.classList.remove('d-none');
+        }
     }
 
     if (!mapEl.dataset.mapListenersBound) {
@@ -387,51 +611,121 @@ function initStudentDeliveryMap() {
         addressField.dataset.autocompleteBound = 'true';
     }
 
+    if (!addressField.dataset.stateListenerBound) {
+        addressField.addEventListener('input', () => {
+            if (!addressField.value.trim() && previewLink) {
+                previewLink.classList.add('d-none');
+            }
+            persistCheckoutLocationState();
+        });
+        addressField.dataset.stateListenerBound = 'true';
+    }
+
     if (useLocationButton && navigator.geolocation && !useLocationButton.dataset.listenerBound) {
-        useLocationButton.addEventListener('click', () => {
+        useLocationButton.addEventListener('click', async () => {
             resetLocationButtonState();
             studentCheckoutState.isLocating = true;
             useLocationButton.disabled = true;
             useLocationButton.textContent = 'Locating...';
+            setLocationStatus('Requesting your current location...', 'muted');
 
-            navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                    const lat = position.coords.latitude;
-                    const lng = position.coords.longitude;
-                    if (!setSelection(lat, lng)) {
-                        alert('Your current location appears to be outside the IIT Kanpur campus.');
-                        resetLocationButtonState();
-                        return;
-                    }
-                    await reverseGeocodeAndFill(lat, lng);
-                    resetLocationButtonState();
-                },
-                (error) => {
-                    if (error && error.code === error.PERMISSION_DENIED) {
-                        alert('Location permission was denied or expired. Please click "Use Current Location" again and allow access when your browser prompts you.');
-                    } else {
-                        alert('We could not access your current location.');
-                    }
-                    resetLocationButtonState();
-                },
-                { enableHighAccuracy: true, timeout: 10000 }
-            );
+            const requestCurrentPosition = (options) => new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, options);
+            });
+
+            try {
+                let position;
+                try {
+                    position = await requestCurrentPosition({ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+                } catch (highAccuracyError) {
+                    position = await requestCurrentPosition({ enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
+                }
+
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                if (!setSelection(lat, lng)) {
+                    alert('Your current location appears to be outside the IIT Kanpur campus.');
+                    setLocationStatus('Current location is outside IIT Kanpur campus.', 'danger');
+                    return;
+                }
+                await reverseGeocodeAndFill(lat, lng);
+                setLocationStatus('Current location loaded.', 'success');
+            } catch (error) {
+                if (error && error.code === error.PERMISSION_DENIED) {
+                    alert('Location permission was denied or has expired. Please allow location access in your browser and try again.');
+                    setLocationStatus('Location permission was denied or expired.', 'danger');
+                } else if (error && error.code === error.TIMEOUT) {
+                    alert('Location request timed out. Please try again.');
+                    setLocationStatus('Location request timed out. Retry from the button.', 'danger');
+                } else {
+                    alert('We could not access your current location.');
+                    setLocationStatus('Current location could not be read. You can still use the map manually.', 'danger');
+                }
+            } finally {
+                resetLocationButtonState();
+                refreshLocationPermissionState();
+            }
         });
         useLocationButton.dataset.listenerBound = 'true';
     } else if (useLocationButton && !navigator.geolocation) {
         useLocationButton.classList.add('d-none');
+        setLocationStatus('This browser does not support geolocation. Pick a point on the map instead.', 'danger');
     }
 }
 
 window.addEventListener('pageshow', (event) => {
+    const navType = getNavigationEntryType();
+    if (event.persisted || navType === 'reload' || navType === 'back_forward') {
+        const pendingSession = getPendingCheckoutPaymentSession();
+        if (pendingSession) {
+            recoverPendingCheckoutSession('Checkout page was restored before payment completion');
+            return;
+        }
+    }
+
     resetLocationButtonState();
-    if (event.persisted && window.google && window.google.maps) {
-        window.setTimeout(initStudentDeliveryMap, 0);
+    restoreCheckoutLocationUi();
+    refreshLocationPermissionState();
+    if (window.google && window.google.maps && studentCheckoutState.map) {
+        window.setTimeout(() => {
+            google.maps.event.trigger(studentCheckoutState.map, 'resize');
+            const point = studentCheckoutState.selectedPoint || campusMapConfig.center;
+            studentCheckoutState.map.setCenter(point);
+            if (studentCheckoutState.marker) {
+                studentCheckoutState.marker.setMap(studentCheckoutState.map);
+                studentCheckoutState.marker.setPosition(point);
+            }
+        }, event.persisted ? 0 : 50);
     }
 });
 
 window.addEventListener('load', () => {
+    const navType = getNavigationEntryType();
+    if (navType === 'reload') {
+        const pendingSession = getPendingCheckoutPaymentSession();
+        if (pendingSession) {
+            recoverPendingCheckoutSession('Checkout page was reloaded before payment completion');
+            return;
+        }
+    }
+
     resetLocationButtonState();
+    restoreCheckoutLocationUi();
+    refreshLocationPermissionState();
+});
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') {
+        return;
+    }
+    resetLocationButtonState();
+    refreshLocationPermissionState();
+    if (window.google && window.google.maps && studentCheckoutState.map) {
+        window.setTimeout(() => {
+            google.maps.event.trigger(studentCheckoutState.map, 'resize');
+            studentCheckoutState.map.setCenter(studentCheckoutState.selectedPoint || campusMapConfig.center);
+        }, 50);
+    }
 });
 {% endif %}
 </script>
@@ -460,6 +754,7 @@ window.addEventListener('load', () => {
                     <button type="button" class="btn btn-outline-primary btn-sm" id="use-current-location">Use Current Location</button>
                     <a id="delivery-map-preview" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm d-none">Open In Google Maps</a>
                 </div>
+                <small id="checkout-location-status" class="text-muted d-block mb-2">Use your current location or pick a point on the map.</small>
                 <small class="text-muted">Only IIT Kanpur campus locations are allowed.</small>
             {% else %}
                 <label for="delivery-address" class="form-label">Delivery Address</label>

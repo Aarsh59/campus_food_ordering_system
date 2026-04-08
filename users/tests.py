@@ -1310,6 +1310,11 @@ class StudentCheckoutTest(TestCase):
         response = self.client.get(reverse('student_checkout'))
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'student/checkout.html')
+        self.assertContains(response, 'checkout-location-status')
+        self.assertContains(response, 'studentCheckoutLocationState')
+        self.assertContains(response, 'studentCheckoutPendingPayment')
+        self.assertIn('no-store', response['Cache-Control'])
+        self.assertIn('no-cache', response['Cache-Control'])
 
     def test_checkout_with_empty_cart(self):
         CartItem.objects.all().delete()  # Empty cart

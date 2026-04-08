@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
+from django.views.decorators.cache import never_cache
 from django.utils import timezone
 from django.db import IntegrityError, transaction
 from .models import (
@@ -1314,6 +1315,7 @@ def student_update_menu_cart_item(request, item_id: int):
 
 
 @login_required
+@never_cache
 def student_checkout(request):
     """Checkout page - prepare orders for each vendor and initiate payment."""
     if request.user.role != User.Role.STUDENT:
