@@ -4,6 +4,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.cache import never_cache
@@ -12,6 +13,8 @@ from django.db import IntegrityError, transaction
 from .models import (
     User,
     StaffApplication,
+    OUTLET_LOCATION_OPTIONS,
+    CUISINE_TYPE_OPTIONS,
     VendorProfile,
     MenuItem,
     Order,
@@ -571,6 +574,11 @@ def delete_account(request):
 
 # ─── Vendor/Delivery Application ─────────────────────────────────────────────
 def apply_view(request):
+    context = {
+        'outlet_location_options': OUTLET_LOCATION_OPTIONS,
+        'cuisine_type_options': CUISINE_TYPE_OPTIONS,
+    }
+
     if request.method == 'POST':
         role_applied = request.POST.get('role_applied')
         email = normalize_email(request.POST.get('email'))
@@ -605,10 +613,16 @@ def apply_view(request):
         )
 
         if role_applied == 'VENDOR':
+            operating_start = (request.POST.get('operating_start') or '').strip()
+            operating_end = (request.POST.get('operating_end') or '').strip()
+
             application.outlet_name     = request.POST.get('outlet_name', '')
             application.outlet_location = request.POST.get('outlet_location', '')
             application.cuisine_type    = request.POST.get('cuisine_type', '')
-            application.operating_hours = request.POST.get('operating_hours', '')
+            application.operating_hours = (
+                f'{operating_start} - {operating_end}'
+                if operating_start and operating_end else ''
+            )
             application.fssai_license   = request.POST.get('fssai_license', '')
             application.fssai_document  = request.FILES.get('fssai_document')
             application.gst_number      = request.POST.get('gst_number', '')
@@ -623,10 +637,16 @@ def apply_view(request):
             application.driving_license_document = request.FILES.get('driving_license_document')
             application.emergency_contact        = request.POST.get('emergency_contact', '')
 
-        application.save()
+        try:
+            application.save()
+        except ValidationError as exc:
+            for field_errors in exc.message_dict.values():
+                for error in field_errors:
+                    messages.error(request, error)
+            return render(request, 'users/apply.html', context)
         return redirect('pending')
 
-    return render(request, 'users/apply.html')
+    return render(request, 'users/apply.html', context)
 
 
 # ─── Pending Page ─────────────────────────────────────────────────────────────

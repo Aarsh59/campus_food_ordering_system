@@ -541,25 +541,37 @@ class StaffApplicationTest(TestCase):
             'email_otp': email_otp,
         }
 
+    def _vendor_application_payload(self, **overrides):
+        otp_fields = {}
+        if 'email_otp' not in overrides:
+            otp_fields = self._otp_fields(email=overrides.get('email', 'vendor@gmail.com'))
+
+        payload = {
+            'role_applied': 'VENDOR',
+            'full_name': 'Test Vendor',
+            'email': 'vendor@gmail.com',
+            'phone': '9876543210',
+            'aadhaar_number': '123456789012',
+            'outlet_name': 'Test Outlet',
+            'outlet_location': 'MAIN_CANTEEN',
+            'cuisine_type': 'FAST_FOOD',
+            'operating_start': '09:00',
+            'operating_end': '21:00',
+            'fssai_license': '12345678901234',
+            'bank_account': '123456789012',
+            'ifsc_code': 'SBIN0001234',
+            **otp_fields,
+        }
+        payload.update(overrides)
+        return payload
+
     def test_apply_page_loads(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'users/apply.html')
 
     def test_vendor_application_submission(self):
-        response = self.client.post(self.url, {
-            'role_applied'   : 'VENDOR',
-            'full_name'      : 'Test Vendor',
-            'email'          : 'vendor@gmail.com',
-            'phone'          : '9876543210',
-            'aadhaar_number' : '123456789012',
-            'outlet_name'    : 'Test Outlet',
-            'outlet_location': 'Block A',
-            'cuisine_type'   : 'Fast Food',
-            'operating_hours': '9AM - 9PM',
-            'fssai_license'  : '12345678901234',
-            **self._otp_fields(email='vendor@gmail.com'),
-        })
+        response = self.client.post(self.url, self._vendor_application_payload())
         self.assertRedirects(response, reverse('pending'))
         self.assertTrue(
             StaffApplication.objects.filter(email='vendor@gmail.com').exists()
@@ -575,19 +587,10 @@ class StaffApplicationTest(TestCase):
             is_superuser=True,
         )
 
-        self.client.post(self.url, {
-            'role_applied'   : 'VENDOR',
-            'full_name'      : 'Test Vendor',
-            'email'          : 'vendor.notify@gmail.com',
-            'phone'          : '9876543210',
-            'aadhaar_number' : '123456789012',
-            'outlet_name'    : 'Test Outlet',
-            'outlet_location': 'Block A',
-            'cuisine_type'   : 'Fast Food',
-            'operating_hours': '9AM - 9PM',
-            'fssai_license'  : '12345678901234',
+        self.client.post(self.url, self._vendor_application_payload(
+            email='vendor.notify@gmail.com',
             **self._otp_fields(email='vendor.notify@gmail.com'),
-        })
+        ))
 
         application = StaffApplication.objects.get(email='vendor.notify@gmail.com')
         notification = Notification.objects.get(recipient=admin_user, application=application)
@@ -604,19 +607,16 @@ class StaffApplicationTest(TestCase):
             is_superuser=True,
         )
 
-        response = self.client.post(self.url, {
-            'role_applied'   : 'VENDOR',
-            'full_name'      : 'Mail Vendor',
-            'email'          : 'vendor.mail@gmail.com',
-            'phone'          : '9876543210',
-            'aadhaar_number' : '123456789012',
-            'outlet_name'    : 'Mail Outlet',
-            'outlet_location': 'Block B',
-            'cuisine_type'   : 'Snacks',
-            'operating_hours': '10AM - 8PM',
-            'fssai_license'  : '12345678901234',
+        response = self.client.post(self.url, self._vendor_application_payload(
+            full_name='Mail Vendor',
+            email='vendor.mail@gmail.com',
+            outlet_name='Mail Outlet',
+            outlet_location='SHOPPING_COMPLEX',
+            cuisine_type='SNACKS',
+            operating_start='10:00',
+            operating_end='20:00',
             **self._otp_fields(email='vendor.mail@gmail.com'),
-        })
+        ))
 
         self.assertRedirects(response, reverse('pending'))
         self.assertEqual(len(mail.outbox), 1)
@@ -648,18 +648,52 @@ class StaffApplicationTest(TestCase):
             phone          = '9876543210',
             role_applied   = 'VENDOR',
             aadhaar_number = '123456789012',
+            outlet_name    = 'Test Outlet',
+            outlet_location = 'MAIN_CANTEEN',
+            cuisine_type   = 'FAST_FOOD',
+            operating_hours = '09:00 - 21:00',
+            fssai_license  = '12345678901234',
+            bank_account   = '123456789012',
+            ifsc_code      = 'SBIN0001234',
         )
-        response = self.client.post(self.url, {
-            'role_applied'   : 'VENDOR',
-            'full_name'      : 'Test Vendor',
-            'email'          : 'vendor@iitk.ac.in',
-            'phone'          : '9876543210',
-            'aadhaar_number' : '123456789012',
-        })
+        response = self.client.post(self.url, self._vendor_application_payload(
+            email='vendor@iitk.ac.in',
+            **self._otp_fields(email='vendor@iitk.ac.in'),
+        ))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             StaffApplication.objects.filter(email='vendor@iitk.ac.in').count(), 1
         )
+
+    def test_vendor_application_rejects_invalid_dropdown_value(self):
+        response = self.client.post(self.url, self._vendor_application_payload(
+            outlet_location='Block A',
+        ))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Select a valid outlet location from the list.')
+        self.assertFalse(StaffApplication.objects.filter(email='vendor@gmail.com').exists())
+
+    def test_vendor_application_rejects_invalid_operating_hours(self):
+        response = self.client.post(self.url, self._vendor_application_payload(
+            operating_start='21:00',
+            operating_end='09:00',
+        ))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Operating hours end time must be later than the start time.')
+        self.assertFalse(StaffApplication.objects.filter(email='vendor@gmail.com').exists())
+
+    def test_vendor_application_rejects_invalid_fssai_and_ifsc(self):
+        response = self.client.post(self.url, self._vendor_application_payload(
+            fssai_license='12345',
+            ifsc_code='12345678901',
+        ))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'FSSAI license number must be exactly 14 digits.')
+        self.assertContains(response, 'IFSC code must follow the standard 11-character bank format.')
+        self.assertFalse(StaffApplication.objects.filter(email='vendor@gmail.com').exists())
 
 
 # ─── Signal Tests ─────────────────────────────────────────────────────────────
@@ -673,6 +707,12 @@ class SignalTest(TestCase):
             role_applied   = 'VENDOR',
             aadhaar_number = '123456789012',
             outlet_name    = 'Johns Outlet',
+            outlet_location = 'MAIN_CANTEEN',
+            cuisine_type   = 'FAST_FOOD',
+            operating_hours = '09:00 - 21:00',
+            fssai_license  = '12345678901234',
+            bank_account   = '123456789012',
+            ifsc_code      = 'SBIN0001234',
         )
 
     def test_approval_creates_user(self):
@@ -737,6 +777,12 @@ class SignalTest(TestCase):
             role_applied   = 'VENDOR',
             aadhaar_number = '123456789012',
             outlet_name    = 'Emoji Outlet',
+            outlet_location = 'SHOPPING_COMPLEX',
+            cuisine_type   = 'SNACKS',
+            operating_hours = '10:00 - 20:00',
+            fssai_license  = '12345678901234',
+            bank_account   = '123456789012',
+            ifsc_code      = 'SBIN0001234',
         )
 
         application.status = 'APPROVED'
@@ -770,6 +816,13 @@ class StaffApplicationAdminTest(TestCase):
             phone='9876543210',
             role_applied='VENDOR',
             aadhaar_number='123456789012',
+            outlet_name='Pending Outlet',
+            outlet_location='MAIN_CANTEEN',
+            cuisine_type='FAST_FOOD',
+            operating_hours='09:00 - 21:00',
+            fssai_license='12345678901234',
+            bank_account='123456789012',
+            ifsc_code='SBIN0001234',
         )
 
     def test_save_model_sets_reviewed_at_when_status_changes_from_pending(self):
@@ -2335,6 +2388,13 @@ class AccountDeletionTest(TestCase):
             phone='9999999997',
             role_applied=StaffApplication.Role.VENDOR,
             aadhaar_number='123412341234',
+            outlet_name='Role Switch Outlet',
+            outlet_location='MAIN_CANTEEN',
+            cuisine_type='FAST_FOOD',
+            operating_hours='09:00 - 21:00',
+            fssai_license='12345678901234',
+            bank_account='123456789012',
+            ifsc_code='SBIN0001234',
             status=StaffApplication.Status.APPROVED,
         )
 

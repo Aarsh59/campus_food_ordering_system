@@ -1,7 +1,57 @@
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.validators import ASCIIUsernameValidator
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
+from datetime import datetime
+import re
+
+
+OUTLET_LOCATION_OPTIONS = [
+    ('ACADEMIC_AREA', 'Academic Area'),
+    ('GATEWAY_PLAZA', 'Gateway Plaza'),
+    ('HALLS_OF_RESIDENCE', 'Halls of Residence Area'),
+    ('MAIN_CANTEEN', 'Main Canteen'),
+    ('SHOPPING_COMPLEX', 'Shopping Complex'),
+    ('VISITOR_HOSTEL', 'Visitor Hostel Area'),
+]
+
+CUISINE_TYPE_OPTIONS = [
+    ('BAKERY', 'Bakery'),
+    ('BEVERAGES', 'Beverages'),
+    ('CAFE', 'Cafe'),
+    ('CHINESE', 'Chinese'),
+    ('DESSERTS', 'Desserts'),
+    ('FAST_FOOD', 'Fast Food'),
+    ('MULTI_CUISINE', 'Multi Cuisine'),
+    ('NORTH_INDIAN', 'North Indian'),
+    ('SOUTH_INDIAN', 'South Indian'),
+    ('SNACKS', 'Snacks'),
+]
+
+_OUTLET_LOCATION_VALUES = {value for value, _ in OUTLET_LOCATION_OPTIONS}
+_CUISINE_TYPE_VALUES = {value for value, _ in CUISINE_TYPE_OPTIONS}
+_IFSC_PATTERN = re.compile(r'^[A-Z]{4}0[A-Z0-9]{6}$')
+_GST_PATTERN = re.compile(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$')
+_OPERATING_HOURS_PATTERN = re.compile(r'^\d{2}:\d{2} - \d{2}:\d{2}$')
+
+
+def _is_digits(value):
+    return bool(value) and value.isdigit()
+
+
+def _parse_operating_hours(value):
+    if not value or not _OPERATING_HOURS_PATTERN.fullmatch(value):
+        raise ValidationError('Operating hours must be in HH:MM - HH:MM 24-hour format.')
+
+    start_text, end_text = value.split(' - ', 1)
+    start_time = datetime.strptime(start_text, '%H:%M').time()
+    end_time = datetime.strptime(end_text, '%H:%M').time()
+
+    if start_time >= end_time:
+        raise ValidationError('Operating hours end time must be later than the start time.')
+
+    return start_time, end_time
 
 
 class User(AbstractUser):
@@ -92,6 +142,73 @@ class StaffApplication(models.Model):
     applied_at  = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
     admin_notes = models.TextField(blank=True)
+
+    def clean(self):
+        errors = {}
+
+        if self.phone and (not _is_digits(self.phone) or len(self.phone) != 10):
+            errors['phone'] = 'Phone number must be exactly 10 digits.'
+
+        if self.aadhaar_number and (not _is_digits(self.aadhaar_number) or len(self.aadhaar_number) != 12):
+            errors['aadhaar_number'] = 'Aadhaar number must be exactly 12 digits.'
+
+        if self.role_applied == self.Role.VENDOR:
+            required_vendor_fields = {
+                'outlet_name': self.outlet_name,
+                'outlet_location': self.outlet_location,
+                'cuisine_type': self.cuisine_type,
+                'operating_hours': self.operating_hours,
+                'fssai_license': self.fssai_license,
+                'bank_account': self.bank_account,
+                'ifsc_code': self.ifsc_code,
+            }
+            for field_name, value in required_vendor_fields.items():
+                if not (value or '').strip():
+                    errors[field_name] = 'This field is required for vendor applications.'
+
+            if self.outlet_location and self.outlet_location not in _OUTLET_LOCATION_VALUES:
+                errors['outlet_location'] = 'Select a valid outlet location from the list.'
+
+            if self.cuisine_type and self.cuisine_type not in _CUISINE_TYPE_VALUES:
+                errors['cuisine_type'] = 'Select a valid cuisine type from the list.'
+
+            if self.operating_hours:
+                try:
+                    _parse_operating_hours(self.operating_hours)
+                except ValidationError as exc:
+                    errors['operating_hours'] = exc.messages[0]
+
+            if self.fssai_license and (not _is_digits(self.fssai_license) or len(self.fssai_license) != 14):
+                errors['fssai_license'] = 'FSSAI license number must be exactly 14 digits.'
+
+            if self.bank_account:
+                if not _is_digits(self.bank_account):
+                    errors['bank_account'] = 'Bank account number must contain digits only.'
+                elif not 9 <= len(self.bank_account) <= 18:
+                    errors['bank_account'] = 'Bank account number must be between 9 and 18 digits.'
+
+            if self.ifsc_code and not _IFSC_PATTERN.fullmatch(self.ifsc_code.upper()):
+                errors['ifsc_code'] = 'IFSC code must follow the standard 11-character bank format.'
+
+            if self.gst_number and not _GST_PATTERN.fullmatch(self.gst_number.upper()):
+                errors['gst_number'] = 'GST number must be a valid 15-character GSTIN.'
+
+        if self.role_applied == self.Role.DELIVERY and self.emergency_contact:
+            if not _is_digits(self.emergency_contact) or len(self.emergency_contact) != 10:
+                errors['emergency_contact'] = 'Emergency contact number must be exactly 10 digits.'
+
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.email:
+            self.email = self.email.strip().lower()
+        if self.ifsc_code:
+            self.ifsc_code = self.ifsc_code.strip().upper()
+        if self.gst_number:
+            self.gst_number = self.gst_number.strip().upper()
+        self.clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.full_name} - {self.role_applied} ({self.status})"

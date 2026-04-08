@@ -67,22 +67,39 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Outlet Location on Campus</label>
-                        <input type="text" name="outlet_location" class="form-control">
+                        <select name="outlet_location" class="form-select" data-role-required="vendor">
+                            <option value="">-- Select outlet location --</option>
+                            {% for value, label in outlet_location_options %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Cuisine Type</label>
-                        <input type="text" name="cuisine_type" class="form-control"
-                               placeholder="e.g. North Indian, Fast Food, Beverages">
+                        <select name="cuisine_type" class="form-select" data-role-required="vendor">
+                            <option value="">-- Select cuisine type --</option>
+                            {% for value, label in cuisine_type_options %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Operating Hours</label>
-                        <input type="text" name="operating_hours" class="form-control"
-                               placeholder="e.g. 9AM - 9PM">
+                        <div class="row g-2">
+                            <div class="col-sm-6">
+                                <input type="time" name="operating_start" class="form-control" data-role-required="vendor">
+                            </div>
+                            <div class="col-sm-6">
+                                <input type="time" name="operating_end" class="form-control" data-role-required="vendor">
+                            </div>
+                        </div>
+                        <div class="form-text">Use 24-hour time in HH:MM format.</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">FSSAI License Number</label>
                         <input type="text" name="fssai_license" class="form-control"
-                               maxlength="14">
+                               pattern="[0-9]{14}" minlength="14" maxlength="14" inputmode="numeric"
+                               data-role-required="vendor">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">FSSAI Document</label>
@@ -92,7 +109,7 @@
                     <div class="mb-3">
                         <label class="form-label">GST Number</label>
                         <input type="text" name="gst_number" class="form-control"
-                               maxlength="15">
+                               maxlength="15" style="text-transform: uppercase;">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">College NOC Document</label>
@@ -101,12 +118,15 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Bank Account Number</label>
-                        <input type="text" name="bank_account" class="form-control">
+                        <input type="text" name="bank_account" class="form-control"
+                               pattern="[0-9]{9,18}" minlength="9" maxlength="18" inputmode="numeric"
+                               data-role-required="vendor">
                     </div>
                     <div class="mb-4">
                         <label class="form-label">IFSC Code</label>
                         <input type="text" name="ifsc_code" class="form-control"
-                               maxlength="11">
+                               pattern="[A-Za-z]{4}0[A-Za-z0-9]{6}" maxlength="11"
+                               style="text-transform: uppercase;" data-role-required="vendor">
                     </div>
                 </div>
 
@@ -316,22 +336,27 @@
         })
     }
 
-    // show/hide vendor or delivery fields based on role selection
-    document.getElementById('role_select').addEventListener('change', function() {
-        document.getElementById('vendor_fields').style.display   = 'none'
-        document.getElementById('delivery_fields').style.display = 'none'
+    function setRoleSpecificRequirements(role) {
+        document.querySelectorAll('[data-role-required="vendor"]').forEach((field) => {
+            field.required = role === 'VENDOR'
+        })
+    }
 
-        if (this.value === 'VENDOR') {
-            document.getElementById('vendor_fields').style.display = 'block'
-        } else if (this.value === 'DELIVERY') {
-            document.getElementById('delivery_fields').style.display = 'block'
-        }
+    function updateRoleFields(role) {
+        document.getElementById('vendor_fields').style.display = role === 'VENDOR' ? 'block' : 'none'
+        document.getElementById('delivery_fields').style.display = role === 'DELIVERY' ? 'block' : 'none'
+        setRoleSpecificRequirements(role)
+    }
+
+    document.getElementById('role_select').addEventListener('change', function() {
+        updateRoleFields(this.value)
     })
 
     getEmailInput().addEventListener('input', () => {
         setOtpButtonState()
     })
 
+    updateRoleFields(document.getElementById('role_select').value)
     setOtpButtonState()
 </script>
 {% endblock %}
