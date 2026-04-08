@@ -1035,6 +1035,28 @@ class StudentDashboardTest(TestCase):
 
         self.assertEqual(response.context['orders_placed_count'], 1)
 
+    @override_settings(GOOGLE_MAPS_API_KEY='test-maps-key')
+    def test_student_dashboard_includes_vendor_map_data(self):
+        vendor_user = User.objects.create_user(
+            username='vendor-map',
+            password='Test@1234',
+            phone='9999999998',
+            role=User.Role.VENDOR
+        )
+        VendorProfile.objects.create(
+            user=vendor_user,
+            outlet_name='Map Vendor',
+            google_maps_location='https://www.google.com/maps/search/?api=1&query=26.5124,80.2329',
+            google_maps_address='IIT Kanpur, Map Vendor'
+        )
+
+        response = self.client.get(reverse('student_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'studentDashboardMap')
+        self.assertContains(response, 'Map Vendor')
+        self.assertEqual(response.context['google_maps_api_key'], 'test-maps-key')
+
 
 class StudentVendorsListTest(TestCase):
 

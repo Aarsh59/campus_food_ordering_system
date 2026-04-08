@@ -189,31 +189,47 @@
         otpState.cooldownEmail = ''
     }
 
+    function getRemainingCooldownSeconds() {
+        if (!otpState.cooldownUntil) {
+            return 0
+        }
+        return Math.max(0, Math.ceil((otpState.cooldownUntil - Date.now()) / 1000))
+    }
+
+    function hasActiveCooldown() {
+        return getRemainingCooldownSeconds() > 0
+    }
+
+    function setEmailInputState() {
+        const emailInput = getEmailInput()
+        emailInput.readOnly = otpState.isSending || hasActiveCooldown()
+    }
+
     function setOtpButtonState() {
         const button = getOtpButton()
-        const currentEmail = getNormalizedEmail()
 
         if (otpState.isSending) {
             button.disabled = true
             button.textContent = 'Sending...'
+            setEmailInputState()
             return
         }
 
-        if (otpState.cooldownUntil && otpState.cooldownEmail === currentEmail) {
-            const remainingSeconds = Math.max(0, Math.ceil((otpState.cooldownUntil - Date.now()) / 1000))
-            if (remainingSeconds > 0) {
-                button.disabled = true
-                button.textContent = `Resend in ${remainingSeconds}s`
-                return
-            }
+        const remainingSeconds = getRemainingCooldownSeconds()
+        if (remainingSeconds > 0) {
+            button.disabled = true
+            button.textContent = `Resend in ${remainingSeconds}s`
+            setEmailInputState()
+            return
         }
 
-        if (otpState.cooldownUntil && otpState.cooldownEmail === currentEmail) {
+        if (otpState.cooldownUntil) {
             clearCooldownState()
         }
 
         button.disabled = false
         button.textContent = 'Send Email OTP'
+        setEmailInputState()
     }
 
     function startCooldown(seconds, email) {
@@ -246,7 +262,7 @@
             return
         }
 
-        if (otpState.cooldownUntil && otpState.cooldownEmail === email) {
+        if (hasActiveCooldown()) {
             setOtpButtonState()
             return
         }

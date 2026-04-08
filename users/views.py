@@ -640,7 +640,7 @@ def student_dashboard(request):
     if request.user.role != User.Role.STUDENT:
         messages.error(request, 'Unauthorized access')
         return redirect('login')
-    
+
     notifications = Notification.objects.filter(recipient=request.user).order_by('-created_at')[:50]
     recent_orders = (
         Order.objects.filter(student=request.user)
@@ -655,10 +655,34 @@ def student_dashboard(request):
     ).exclude(
         vendor_status=Order.VendorStatus.CANCELLED,
     ).count()
+
+    vendor_map_locations = []
+    vendor_profiles = VendorProfile.objects.exclude(
+        google_maps_location='',
+    ).exclude(
+        google_maps_location__isnull=True,
+    ).order_by('outlet_name')
+
+    for vendor_profile in vendor_profiles:
+        coords = _parse_google_maps_coordinates(vendor_profile.google_maps_location)
+        if not coords:
+            continue
+        vendor_map_locations.append({
+            'id': vendor_profile.id,
+            'name': vendor_profile.outlet_name,
+            'address': vendor_profile.google_maps_address or vendor_profile.outlet_name,
+            'lat': coords[0],
+            'lng': coords[1],
+            'maps_link': vendor_profile.google_maps_location,
+        })
+
     return render(request, 'student/dashboard.html', {
         'notifications': notifications,
         'recent_orders': recent_orders,
         'orders_placed_count': orders_placed_count,
+        'vendor_map_locations_json': json.dumps(vendor_map_locations),
+        'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
+        **_campus_map_context(),
     })
 
 
