@@ -28,6 +28,7 @@ from .models import (
 from .username_validation import USERNAME_ALLOWED_DESCRIPTION, is_valid_username
 from .email_utils import send_app_email
 from .otp_utils import (
+    OTPResendCooldownError,
     is_allowed_email_domain,
     is_valid_phone,
     normalize_email,
@@ -42,6 +43,24 @@ import urllib.request
 import razorpay
 from datetime import timedelta
 from django.db.models import Q
+
+
+def _format_retry_after_message(retry_after_seconds: int) -> str:
+    if retry_after_seconds <= 1:
+        return 'Please wait 1 second before requesting another OTP.'
+    if retry_after_seconds < 60:
+        return f'Please wait {retry_after_seconds} seconds before requesting another OTP.'
+
+    minutes, seconds = divmod(retry_after_seconds, 60)
+    minute_label = 'minute' if minutes == 1 else 'minutes'
+    if seconds == 0:
+        return f'Please wait {minutes} {minute_label} before requesting another OTP.'
+
+    second_label = 'second' if seconds == 1 else 'seconds'
+    return (
+        f'Please wait {minutes} {minute_label} and {seconds} {second_label} '
+        'before requesting another OTP.'
+    )
 
 
 def _dashboard_route_name_for_user(user):
@@ -163,7 +182,15 @@ def send_registration_otp(request):
         return JsonResponse({'success': False, 'error': 'Email already registered'}, status=400)
     if purpose == ContactOTP.Purpose.STAFF_APPLICATION and StaffApplication.objects.filter(email=email).exists():
         return JsonResponse({'success': False, 'error': 'An application with this email already exists'}, status=400)
-    sent = send_otp(purpose, channel, email)
+    try:
+        sent = send_otp(purpose, channel, email)
+    except OTPResendCooldownError as exc:
+        return JsonResponse({
+            'success': False,
+            'error': _format_retry_after_message(exc.retry_after_seconds),
+            'retry_after_seconds': exc.retry_after_seconds,
+        }, status=429)
+
     return JsonResponse({
         'success': sent,
         'message': 'Email OTP sent. Please check your inbox.',

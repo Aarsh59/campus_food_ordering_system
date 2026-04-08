@@ -214,6 +214,64 @@ class RegisterViewTest(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.json()['success'])
 
+    @override_settings(OTP_RESEND_COOLDOWN_SECONDS=60)
+    def test_send_registration_email_otp_enforces_resend_cooldown(self):
+        payload = {
+            'purpose': ContactOTP.Purpose.STUDENT_REGISTER,
+            'channel': ContactOTP.Channel.EMAIL,
+            'email': 'student@iitk.ac.in',
+            'phone': '9876543210',
+        }
+
+        first_response = self.client.post(reverse('send_registration_otp'), payload)
+        second_response = self.client.post(reverse('send_registration_otp'), payload)
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertTrue(first_response.json()['success'])
+        self.assertEqual(second_response.status_code, 429)
+        self.assertFalse(second_response.json()['success'])
+        self.assertGreaterEqual(second_response.json()['retry_after_seconds'], 58)
+        self.assertLessEqual(second_response.json()['retry_after_seconds'], 60)
+        self.assertEqual(ContactOTP.objects.filter(
+            purpose=ContactOTP.Purpose.STUDENT_REGISTER,
+            channel=ContactOTP.Channel.EMAIL,
+            target='student@iitk.ac.in',
+            verified_at__isnull=True,
+        ).count(), 1)
+        self.assertEqual(len(mail.outbox), 1)
+
+    @override_settings(OTP_RESEND_COOLDOWN_SECONDS=60)
+    def test_send_registration_email_otp_allows_resend_after_cooldown(self):
+        payload = {
+            'purpose': ContactOTP.Purpose.STUDENT_REGISTER,
+            'channel': ContactOTP.Channel.EMAIL,
+            'email': 'student2@iitk.ac.in',
+            'phone': '9876543210',
+        }
+
+        first_response = self.client.post(reverse('send_registration_otp'), payload)
+        otp = ContactOTP.objects.get(
+            purpose=ContactOTP.Purpose.STUDENT_REGISTER,
+            channel=ContactOTP.Channel.EMAIL,
+            target='student2@iitk.ac.in',
+            verified_at__isnull=True,
+        )
+        otp.created_at = timezone.now() - timedelta(seconds=61)
+        otp.save(update_fields=['created_at'])
+
+        second_response = self.client.post(reverse('send_registration_otp'), payload)
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertTrue(second_response.json()['success'])
+        self.assertEqual(ContactOTP.objects.filter(
+            purpose=ContactOTP.Purpose.STUDENT_REGISTER,
+            channel=ContactOTP.Channel.EMAIL,
+            target='student2@iitk.ac.in',
+            verified_at__isnull=True,
+        ).count(), 1)
+        self.assertEqual(len(mail.outbox), 2)
+
 
 # ─── Login Tests ──────────────────────────────────────────────────────────────
 class LoginViewTest(TestCase):

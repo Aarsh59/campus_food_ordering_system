@@ -13,6 +13,12 @@ OTP_DIGITS = 6
 PHONE_RE = re.compile(r'^\d{10}$')
 
 
+class OTPResendCooldownError(Exception):
+    def __init__(self, retry_after_seconds: int):
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(f'OTP resend is blocked for {retry_after_seconds} more seconds')
+
+
 def normalize_email(email: str) -> str:
     return (email or '').strip().lower()
 
@@ -34,8 +40,36 @@ def generate_otp() -> str:
     return ''.join(str(random.SystemRandom().randint(0, 9)) for _ in range(OTP_DIGITS))
 
 
+def get_otp_resend_cooldown_seconds() -> int:
+    return max(0, int(getattr(settings, 'OTP_RESEND_COOLDOWN_SECONDS', 60)))
+
+
+def get_otp_retry_after_seconds(purpose: str, channel: str, target: str) -> int:
+    target = normalize_email(target) if channel == ContactOTP.Channel.EMAIL else normalize_phone(target)
+    latest_otp = (
+        ContactOTP.objects
+        .filter(purpose=purpose, channel=channel, target=target, verified_at__isnull=True)
+        .order_by('-created_at')
+        .first()
+    )
+    if not latest_otp:
+        return 0
+
+    cooldown_seconds = get_otp_resend_cooldown_seconds()
+    if cooldown_seconds == 0:
+        return 0
+
+    resend_allowed_at = latest_otp.created_at + timedelta(seconds=cooldown_seconds)
+    retry_after = int((resend_allowed_at - timezone.now()).total_seconds())
+    return max(0, retry_after)
+
+
 def issue_otp(purpose: str, channel: str, target: str) -> tuple[ContactOTP, str]:
     target = normalize_email(target) if channel == ContactOTP.Channel.EMAIL else normalize_phone(target)
+    retry_after_seconds = get_otp_retry_after_seconds(purpose, channel, target)
+    if retry_after_seconds > 0:
+        raise OTPResendCooldownError(retry_after_seconds)
+
     code = generate_otp()
     ContactOTP.objects.filter(
         purpose=purpose,

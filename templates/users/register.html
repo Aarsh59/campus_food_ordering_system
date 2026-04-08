@@ -17,9 +17,9 @@
                     <label class="form-label">College Email</label>
                     <div class="input-group">
                         <input type="email" name="email" id="email" class="form-control" required>
-                        <button type="button" class="btn btn-outline-primary" onclick="sendOtp('EMAIL')">Send Email OTP</button>
+                        <button type="button" id="send-email-otp-btn" class="btn btn-outline-primary" onclick="sendOtp('EMAIL')">Send Email OTP</button>
                     </div>
-                    <div class="form-text">Must be your college email address</div>
+                    <div class="form-text">Must be your college email address. You can request a new OTP after a short cooldown.</div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Phone Number</label>
@@ -58,18 +58,103 @@ function getCsrfToken() {
     return document.querySelector('[name=csrfmiddlewaretoken]').value
 }
 
+const otpState = {
+    isSending: false,
+    cooldownTimerId: null,
+    cooldownUntil: null,
+    cooldownEmail: '',
+}
+
 function setOtpStatus(message, isError) {
     const status = document.getElementById('otp-status')
     status.textContent = message
     status.className = isError ? 'small mb-3 text-danger' : 'small mb-3 text-success'
 }
 
+function getEmailInput() {
+    return document.getElementById('email')
+}
+
+function getOtpButton() {
+    return document.getElementById('send-email-otp-btn')
+}
+
+function getNormalizedEmail() {
+    return getEmailInput().value.trim().toLowerCase()
+}
+
+function clearCooldownState() {
+    if (otpState.cooldownTimerId) {
+        clearInterval(otpState.cooldownTimerId)
+    }
+    otpState.cooldownTimerId = null
+    otpState.cooldownUntil = null
+    otpState.cooldownEmail = ''
+}
+
+function setOtpButtonState() {
+    const button = getOtpButton()
+    const currentEmail = getNormalizedEmail()
+
+    if (otpState.isSending) {
+        button.disabled = true
+        button.textContent = 'Sending...'
+        return
+    }
+
+    if (otpState.cooldownUntil && otpState.cooldownEmail === currentEmail) {
+        const remainingSeconds = Math.max(0, Math.ceil((otpState.cooldownUntil - Date.now()) / 1000))
+        if (remainingSeconds > 0) {
+            button.disabled = true
+            button.textContent = `Resend in ${remainingSeconds}s`
+            return
+        }
+    }
+
+    if (otpState.cooldownUntil && otpState.cooldownEmail === currentEmail) {
+        clearCooldownState()
+    }
+
+    button.disabled = false
+    button.textContent = 'Send Email OTP'
+}
+
+function startCooldown(seconds, email) {
+    clearCooldownState()
+    otpState.cooldownUntil = Date.now() + (seconds * 1000)
+    otpState.cooldownEmail = email
+    setOtpButtonState()
+    otpState.cooldownTimerId = setInterval(() => {
+        setOtpButtonState()
+        if (!otpState.cooldownUntil) {
+            clearInterval(otpState.cooldownTimerId)
+        }
+    }, 1000)
+}
+
 function sendOtp(channel) {
+    if (otpState.isSending) {
+        return
+    }
+
+    const email = getNormalizedEmail()
+    if (!email) {
+        setOtpStatus('Enter your IITK email address first.', true)
+        return
+    }
+
+    if (otpState.cooldownUntil && otpState.cooldownEmail === email) {
+        setOtpButtonState()
+        return
+    }
+
     const form = new FormData()
     form.append('purpose', 'STUDENT_REGISTER')
     form.append('channel', 'EMAIL')
-    form.append('email', document.getElementById('email').value)
+    form.append('email', email)
 
+    otpState.isSending = true
+    setOtpButtonState()
     fetch('{% url "send_registration_otp" %}', {
         method: 'POST',
         headers: {'X-CSRFToken': getCsrfToken()},
@@ -78,8 +163,23 @@ function sendOtp(channel) {
     .then(response => response.json().then(data => ({ok: response.ok, data})))
     .then(({ok, data}) => {
         setOtpStatus(ok && data.success ? data.message : data.error, !(ok && data.success))
+        if (ok && data.success) {
+            startCooldown(60, email)
+        } else if (data.retry_after_seconds) {
+            startCooldown(data.retry_after_seconds, email)
+        }
     })
     .catch(() => setOtpStatus('Could not send OTP. Please try again.', true))
+    .finally(() => {
+        otpState.isSending = false
+        setOtpButtonState()
+    })
 }
+
+getEmailInput().addEventListener('input', () => {
+    setOtpButtonState()
+})
+
+setOtpButtonState()
 </script>
 {% endblock %}

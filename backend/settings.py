@@ -215,6 +215,7 @@ EMAIL_TIMEOUT = int(_env_value('EMAIL_TIMEOUT', default='10'))
 # OTP verification settings
 OTP_EXPIRY_MINUTES = int(_env_value('OTP_EXPIRY_MINUTES', default='10'))
 OTP_MAX_ATTEMPTS = int(_env_value('OTP_MAX_ATTEMPTS', default='5'))
+OTP_RESEND_COOLDOWN_SECONDS = int(_env_value('OTP_RESEND_COOLDOWN_SECONDS', default='60'))
 # ─── Default PK ───────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 LOGIN_URL = '/login/'
