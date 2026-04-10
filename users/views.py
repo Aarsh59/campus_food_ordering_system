@@ -1,6 +1,7 @@
 from decimal import Decimal, InvalidOperation
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.conf import settings
@@ -464,6 +465,13 @@ def register_view(request):
         # validations
         if password1 != password2:
             messages.error(request, 'Passwords do not match')
+            return render(request, 'users/register.html')
+
+        try:
+            validate_password(password1, user=User(username=username, email=email, phone=phone))
+        except ValidationError as exc:
+            for message in exc.messages:
+                messages.error(request, message)
             return render(request, 'users/register.html')
 
         if not is_valid_username(username):

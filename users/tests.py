@@ -146,6 +146,19 @@ class RegisterViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(User.objects.filter(username='newstudent').exists())
 
+    def test_register_rejects_short_password(self):
+        response = self.client.post(self.url, {
+            'username'  : 'shortpassuser',
+            'email'     : 'shortpassuser@iitk.ac.in',
+            'phone'     : '9876543210',
+            'password1' : 'ab',
+            'password2' : 'ab',
+            **self._otp_fields(email='shortpassuser@iitk.ac.in'),
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(User.objects.filter(username='shortpassuser').exists())
+        self.assertContains(response, 'This password is too short')
+
     def test_register_duplicate_username(self):
         User.objects.create_user(
             username='existing',
