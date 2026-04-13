@@ -41,6 +41,7 @@ urlpatterns = [
     path('vendor/tickets/<int:order_id>/accept/', views.vendor_ticket_accept, name='vendor_ticket_accept'),
     path('vendor/tickets/<int:order_id>/reject/', views.vendor_ticket_reject, name='vendor_ticket_reject'),
     path('vendor/orders/<int:order_id>/status/', views.vendor_order_status_update, name='vendor_order_status_update'),
+    path('vendor/orders/<int:order_id>/takeout-complete/', views.vendor_mark_takeout_completed, name='vendor_mark_takeout_completed'),
     path('vendor/order/<int:order_id>/broadcast/', views.vendor_broadcast_delivery, name='vendor_broadcast_delivery'),
     
     # Delivery Dashboard & Management

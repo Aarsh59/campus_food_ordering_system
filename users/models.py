@@ -321,6 +321,14 @@ class Order(models.Model):
         COMPLETED = 'COMPLETED', 'Completed'
         FAILED = 'FAILED', 'Failed'
 
+    class FulfillmentType(models.TextChoices):
+        DELIVERY = 'DELIVERY', 'Delivery'
+        TAKEOUT = 'TAKEOUT', 'Takeout'
+
+    class PaymentMethod(models.TextChoices):
+        RAZORPAY = 'RAZORPAY', 'Razorpay'
+        COD = 'COD', 'Cash on delivery'
+
     student = models.ForeignKey('User', on_delete=models.CASCADE, related_name='orders_as_student')
     vendor = models.ForeignKey(VendorProfile, on_delete=models.CASCADE, related_name='orders')
 
@@ -328,6 +336,16 @@ class Order(models.Model):
     vendor_status = models.CharField(max_length=30, choices=VendorStatus.choices, default=VendorStatus.NOT_STARTED)
     delivery_status = models.CharField(max_length=30, choices=DeliveryStatus.choices, default=DeliveryStatus.NOT_STARTED)
     payment_status = models.CharField(max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING)
+    fulfillment_type = models.CharField(
+        max_length=20,
+        choices=FulfillmentType.choices,
+        default=FulfillmentType.DELIVERY,
+    )
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PaymentMethod.choices,
+        default=PaymentMethod.RAZORPAY,
+    )
 
     # Order amount
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -353,6 +371,14 @@ class Order(models.Model):
 
     def __str__(self):
         return f"{self.order_code} ({self.student.username} -> {self.vendor})"
+
+    @property
+    def is_takeout(self):
+        return self.fulfillment_type == self.FulfillmentType.TAKEOUT
+
+    @property
+    def is_delivery(self):
+        return self.fulfillment_type == self.FulfillmentType.DELIVERY
 
 
 class OrderItem(models.Model):

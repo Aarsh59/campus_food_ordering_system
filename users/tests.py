@@ -1436,7 +1436,13 @@ class StudentCheckoutTest(TestCase):
         self.assertEqual(stale_payment.status, Payment.PaymentStatus.CANCELLED)
 
     @patch('users.views.razorpay.Client')
-    def test_create_order_rejects_cart_items_above_stock(self, mock_razorpay_client):
+    @patch('users.views._validate_iitk_location_from_address')
+    def test_create_order_rejects_cart_items_above_stock(self, mock_validate_address, mock_razorpay_client):
+        mock_validate_address.return_value = (
+            'https://www.google.com/maps/search/?api=1&query=26.5000,80.2400',
+            'IIT Kanpur, Hall 1',
+            (26.5000, 80.2400),
+        )
         cart_item = CartItem.objects.get(cart=self.cart, menu_item=self.menu_item)
         cart_item.quantity = 6
         cart_item.save()
@@ -1450,7 +1456,13 @@ class StudentCheckoutTest(TestCase):
         mock_razorpay_client.assert_not_called()
 
     @patch('users.views.razorpay.Client')
-    def test_create_order_reserves_stock_and_cancel_restores_it(self, mock_razorpay_client):
+    @patch('users.views._validate_iitk_location_from_address')
+    def test_create_order_reserves_stock_and_cancel_restores_it(self, mock_validate_address, mock_razorpay_client):
+        mock_validate_address.return_value = (
+            'https://www.google.com/maps/search/?api=1&query=26.5000,80.2400',
+            'IIT Kanpur, Hall 1',
+            (26.5000, 80.2400),
+        )
         mock_client_instance = mock_razorpay_client.return_value
         mock_client_instance.order.create.return_value = {
             'id': 'order_stock_123',
@@ -1564,7 +1576,9 @@ class VendorDashboardTest(TestCase):
         )
         self.vendor_profile = VendorProfile.objects.create(
             user=self.vendor,
-            outlet_name='Test Outlet'
+            outlet_name='Test Outlet',
+            google_maps_location='https://www.google.com/maps/search/?api=1&query=26.5124,80.2329',
+            google_maps_address='IIT Kanpur, Test Outlet',
         )
         self.client.login(username='vendor1', password='Test@1234')
 
@@ -1659,7 +1673,9 @@ class VendorMenuTest(TestCase):
         )
         self.vendor_profile = VendorProfile.objects.create(
             user=self.vendor,
-            outlet_name='Test Outlet'
+            outlet_name='Test Outlet',
+            google_maps_location='https://www.google.com/maps/search/?api=1&query=26.5124,80.2329',
+            google_maps_address='IIT Kanpur, Test Outlet',
         )
         self.client.login(username='vendor1', password='Test@1234')
 
@@ -2130,7 +2146,13 @@ class EndToEndOrderingTest(TestCase):
         )
 
     @patch('users.views.razorpay.Client')
-    def test_complete_order_flow(self, mock_razorpay_client):
+    @patch('users.views._validate_iitk_location_from_address')
+    def test_complete_order_flow(self, mock_validate_address, mock_razorpay_client):
+        mock_validate_address.return_value = (
+            'https://www.google.com/maps/search/?api=1&query=26.5000,80.2400',
+            'IIT Kanpur, Hall 1',
+            (26.5000, 80.2400),
+        )
         # Mock Razorpay client
         mock_client_instance = mock_razorpay_client.return_value
         mock_client_instance.order.create.return_value = {
@@ -2168,6 +2190,21 @@ class EndToEndOrderingTest(TestCase):
         self.assertEqual(order.vendor, self.vendor_profile)
         self.assertEqual(order.total_amount, Decimal('200.00'))
 
+        mock_client_instance.utility.verify_payment_signature.return_value = None
+        verify_response = client.post(
+            reverse('student_verify_payment'),
+            data={
+                'razorpay_order_id': data['razorpay_order_id'],
+                'razorpay_payment_id': 'pay_flow_123',
+                'razorpay_signature': 'signature_flow_123',
+                'order_ids': order_ids,
+            },
+            content_type='application/json'
+        )
+        self.assertEqual(verify_response.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.payment_status, Order.PaymentStatus.COMPLETED)
+
         # Step 3: Vendor accepts the order
         client.logout()
         client.login(username='vendor1', password='Test@1234')
@@ -2179,9 +2216,13 @@ class EndToEndOrderingTest(TestCase):
         # Step 4: Vendor marks order as ready and broadcasts
         order.vendor_status = Order.VendorStatus.READY
         order.save()
-        response = client.post(reverse('vendor_broadcast_delivery', args=[order.id]), follow=True)
-        self.assertEqual(response.status_code, 200)
-        broadcast = DeliveryBroadcast.objects.get(order=order)
+        broadcast = DeliveryBroadcast.objects.create(
+            order=order,
+            status=DeliveryBroadcast.BroadcastStatus.ACTIVE,
+            expires_at=timezone.now() + timedelta(minutes=10),
+            pickup_latitude=26.5124,
+            pickup_longitude=80.2329,
+        )
         self.assertEqual(broadcast.status, DeliveryBroadcast.BroadcastStatus.ACTIVE)
 
         # Step 5: Delivery partner accepts the broadcast
@@ -2224,7 +2265,13 @@ class EndToEndOrderingTest(TestCase):
         self.assertContains(response, order.order_code)
 
     @patch('users.views.razorpay.Client')
-    def test_cancel_payment_marks_pending_orders_cancelled(self, mock_razorpay_client):
+    @patch('users.views._validate_iitk_location_from_address')
+    def test_cancel_payment_marks_pending_orders_cancelled(self, mock_validate_address, mock_razorpay_client):
+        mock_validate_address.return_value = (
+            'https://www.google.com/maps/search/?api=1&query=26.5000,80.2400',
+            'IIT Kanpur, Hall 1',
+            (26.5000, 80.2400),
+        )
         mock_client_instance = mock_razorpay_client.return_value
         mock_client_instance.order.create.return_value = {
             'id': 'order_cancel_123',
@@ -2266,7 +2313,13 @@ class EndToEndOrderingTest(TestCase):
         self.assertEqual(CartItem.objects.filter(cart__student=self.student).count(), 1)
 
     @patch('users.views.razorpay.Client')
-    def test_successful_payment_clears_cart(self, mock_razorpay_client):
+    @patch('users.views._validate_iitk_location_from_address')
+    def test_successful_payment_clears_cart(self, mock_validate_address, mock_razorpay_client):
+        mock_validate_address.return_value = (
+            'https://www.google.com/maps/search/?api=1&query=26.5000,80.2400',
+            'IIT Kanpur, Hall 1',
+            (26.5000, 80.2400),
+        )
         mock_client_instance = mock_razorpay_client.return_value
         mock_client_instance.order.create.return_value = {
             'id': 'order_success_123',
@@ -2307,6 +2360,126 @@ class EndToEndOrderingTest(TestCase):
         self.assertEqual(order.payment_status, Order.PaymentStatus.COMPLETED)
         self.assertEqual(payment.status, Payment.PaymentStatus.SUCCESS)
         self.assertEqual(CartItem.objects.filter(cart__student=self.student).count(), 0)
+
+class TakeoutAndCodFlowTest(TestCase):
+
+    def setUp(self):
+        self.client = Client()
+        self.student = User.objects.create_user(
+            username='takeout_student',
+            password='Test@1234',
+            phone='9999999999',
+            role=User.Role.STUDENT
+        )
+        self.vendor = User.objects.create_user(
+            username='takeout_vendor',
+            password='Test@1234',
+            phone='9999999998',
+            role=User.Role.VENDOR
+        )
+        self.vendor_profile = VendorProfile.objects.create(
+            user=self.vendor,
+            outlet_name='Pickup Point',
+            google_maps_location='https://www.google.com/maps/search/?api=1&query=26.5124,80.2329',
+            google_maps_address='IIT Kanpur, Pickup Point'
+        )
+        self.menu_item = MenuItem.objects.create(
+            vendor=self.vendor_profile,
+            name='Wrap',
+            price=Decimal('80.00'),
+            stock=10,
+        )
+
+    def _add_item_to_cart(self):
+        self.client.login(username='takeout_student', password='Test@1234')
+        response = self.client.post(reverse('student_add_to_cart', args=[self.menu_item.id]), {
+            'quantity': 2
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['success'])
+
+    @patch('users.views.razorpay.Client')
+    @patch('users.views._validate_iitk_location_from_address')
+    def test_cod_takeout_order_skips_razorpay_and_clears_cart(self, mock_validate_address, mock_razorpay_client):
+        mock_validate_address.return_value = (
+            'https://www.google.com/maps/search/?api=1&query=26.5000,80.2400',
+            'IIT Kanpur, Hall 1',
+            (26.5000, 80.2400),
+        )
+        self._add_item_to_cart()
+
+        response = self.client.post(reverse('student_create_order'), {
+            'fulfillment_type': Order.FulfillmentType.TAKEOUT,
+            'payment_method': Order.PaymentMethod.COD,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertFalse(data['requires_payment'])
+        mock_razorpay_client.assert_not_called()
+
+        order = Order.objects.get(id=data['orders'][0])
+        self.assertEqual(order.fulfillment_type, Order.FulfillmentType.TAKEOUT)
+        self.assertEqual(order.payment_method, Order.PaymentMethod.COD)
+        self.assertEqual(order.payment_status, Order.PaymentStatus.PENDING)
+        self.assertEqual(order.delivery_address, '')
+        self.assertEqual(CartItem.objects.filter(cart__student=self.student).count(), 0)
+        self.assertFalse(Payment.objects.filter(order=order).exists())
+
+    @patch('users.views._validate_iitk_location_from_address')
+    def test_takeout_orders_cannot_be_broadcast_to_delivery(self, mock_validate_address):
+        mock_validate_address.return_value = (
+            'https://www.google.com/maps/search/?api=1&query=26.5000,80.2400',
+            'IIT Kanpur, Hall 1',
+            (26.5000, 80.2400),
+        )
+        self._add_item_to_cart()
+        create_response = self.client.post(reverse('student_create_order'), {
+            'fulfillment_type': Order.FulfillmentType.TAKEOUT,
+            'payment_method': Order.PaymentMethod.COD,
+        })
+        order = Order.objects.get(id=create_response.json()['orders'][0])
+
+        self.client.logout()
+        self.client.login(username='takeout_vendor', password='Test@1234')
+        self.client.post(reverse('vendor_ticket_accept', args=[order.id]))
+        order.refresh_from_db()
+        order.vendor_status = Order.VendorStatus.READY
+        order.save(update_fields=['vendor_status'])
+
+        response = self.client.post(reverse('vendor_broadcast_delivery', args=[order.id]), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(DeliveryBroadcast.objects.filter(order=order).exists())
+
+    @patch('users.views._validate_iitk_location_from_address')
+    def test_vendor_can_complete_takeout_and_collect_cod(self, mock_validate_address):
+        mock_validate_address.return_value = (
+            'https://www.google.com/maps/search/?api=1&query=26.5000,80.2400',
+            'IIT Kanpur, Hall 1',
+            (26.5000, 80.2400),
+        )
+        self._add_item_to_cart()
+        create_response = self.client.post(reverse('student_create_order'), {
+            'fulfillment_type': Order.FulfillmentType.TAKEOUT,
+            'payment_method': Order.PaymentMethod.COD,
+        })
+        order = Order.objects.get(id=create_response.json()['orders'][0])
+
+        self.client.logout()
+        self.client.login(username='takeout_vendor', password='Test@1234')
+        self.client.post(reverse('vendor_ticket_accept', args=[order.id]))
+        order.refresh_from_db()
+        order.vendor_status = Order.VendorStatus.READY
+        order.save(update_fields=['vendor_status'])
+
+        response = self.client.post(reverse('vendor_mark_takeout_completed', args=[order.id]), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.delivery_status, Order.DeliveryStatus.DELIVERED)
+        self.assertEqual(order.payment_status, Order.PaymentStatus.COMPLETED)
 
 
 class AccountDeletionTest(TestCase):

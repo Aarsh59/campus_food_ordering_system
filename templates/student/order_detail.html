@@ -148,28 +148,37 @@ let markers = {};
 let polyline;
 let trackingRefreshTimer;
 const studentLocation = {{ student_location_json|default:"null"|safe }};
+const vendorLocation = {{ vendor_location_json|default:"null"|safe }};
+const isTakeout = {% if order.fulfillment_type == 'TAKEOUT' %}true{% else %}false{% endif %};
 
 function initMap() {
+    const mapElement = document.getElementById('delivery-map');
+    if (!mapElement) {
+        return;
+    }
     const defaultLocation = { lat: 26.5124, lng: 80.2394 }; // IIT Kanpur
     
-    map = new google.maps.Map(document.getElementById('delivery-map'), {
+    map = new google.maps.Map(mapElement, {
         zoom: 16,
         center: defaultLocation,
         mapTypeId: 'roadmap'
     });
 
-    // Add vendor location marker
-    {% if order.vendor.google_maps_location %}
-        const vendorCoords = parseGoogleMapsUrl('{{ order.vendor.google_maps_location }}');
-        if (vendorCoords) {
-            markers.vendor = new google.maps.Marker({
-                position: vendorCoords,
-                map: map,
-                title: '{{ order.vendor.outlet_name }}',
-                icon: 'http://maps.google.com/mapfiles/ms/icons/orange-dot.png'
-            });
-        }
-    {% endif %}
+    const parsedVendorLocation = vendorLocation || {% if order.vendor.google_maps_location %}parseGoogleMapsUrl('{{ order.vendor.google_maps_location }}'){% else %}null{% endif %};
+    if (parsedVendorLocation) {
+        markers.vendor = new google.maps.Marker({
+            position: parsedVendorLocation,
+            map: map,
+            title: '{{ order.vendor.outlet_name }}',
+            icon: 'http://maps.google.com/mapfiles/ms/icons/orange-dot.png'
+        });
+        map.setCenter(parsedVendorLocation);
+    }
+
+    if (isTakeout) {
+        initializeTakeoutRoute(parsedVendorLocation || defaultLocation);
+        return;
+    }
 
     const studentMarkerLocation = studentLocation || defaultLocation;
     markers.student = new google.maps.Marker({
@@ -179,10 +188,7 @@ function initMap() {
         icon: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png'
     });
 
-    // Load tracking updates
     loadTrackingUpdates();
-    
-    // Refresh tracking every 3 seconds
     trackingRefreshTimer = setInterval(loadTrackingUpdates, 3000);
 }
 
@@ -262,6 +268,66 @@ function loadTrackingUpdates() {
     });
 }
 
+function initializeTakeoutRoute(destination) {
+    const routeStatus = document.getElementById('takeout-route-status');
+    const routeLink = document.getElementById('takeout-google-maps-link');
+
+    if (routeLink && destination) {
+        routeLink.href = `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}&travelmode=walking`;
+    }
+
+    if (!navigator.geolocation) {
+        if (routeStatus) {
+            routeStatus.textContent = 'Live route guidance is unavailable in this browser. You can still open Google Maps.';
+        }
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition((position) => {
+        const origin = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+        };
+
+        markers.student = new google.maps.Marker({
+            position: origin,
+            map: map,
+            title: 'Your Current Location',
+            icon: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png'
+        });
+
+        const directionsService = new google.maps.DirectionsService();
+        const directionsRenderer = new google.maps.DirectionsRenderer({
+            map: map,
+            suppressMarkers: true,
+        });
+
+        directionsService.route({
+            origin: origin,
+            destination: destination,
+            travelMode: google.maps.TravelMode.WALKING,
+        }, (result, status) => {
+            if (status === google.maps.DirectionsStatus.OK) {
+                directionsRenderer.setDirections(result);
+                const leg = result.routes[0] && result.routes[0].legs[0];
+                if (routeStatus && leg) {
+                    routeStatus.textContent = `Route ready: about ${leg.distance.text}, ${leg.duration.text} on foot.`;
+                }
+            } else if (routeStatus) {
+                routeStatus.textContent = 'Could not build a walking route automatically. Open Google Maps below.';
+            }
+        });
+    }, () => {
+        if (routeStatus) {
+            routeStatus.textContent = 'Allow location access to see a live route from your current location.';
+        }
+    }, {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000,
+    });
+}
+
 // Initialize map when page loads
 document.addEventListener('DOMContentLoaded', function() {
     initMap();
@@ -272,7 +338,15 @@ document.addEventListener('DOMContentLoaded', function() {
 {% block content %}
 <div class="mb-4">
     <h1 class="mb-1">Order Details</h1>
-    <p class="text-muted">{% if order_is_cancelled %}This order is no longer active{% else %}Track your delivery in real-time{% endif %}</p>
+    <p class="text-muted">
+        {% if order_is_cancelled %}
+            This order is no longer active
+        {% elif order.fulfillment_type == 'TAKEOUT' %}
+            Follow your takeout progress and route to the outlet
+        {% else %}
+            Track your delivery in real-time
+        {% endif %}
+    </p>
 </div>
 
 {% if order_is_cancelled %}
@@ -316,16 +390,45 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                 </div>
 
-                <!-- Delivery Address -->
+                <!-- Fulfillment Details -->
                 <div style="background-color: #f0f0f0; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                    <strong>📍 Delivery Address</strong>
-                    <p class="mb-0" style="margin-top: 8px;">{{ order.delivery_address }}</p>
+                    <strong>{% if order.fulfillment_type == 'TAKEOUT' %}📍 Pickup Location{% else %}📍 Delivery Address{% endif %}</strong>
+                    <p class="mb-0" style="margin-top: 8px;">
+                        {% if order.fulfillment_type == 'TAKEOUT' %}
+                            {{ order.vendor.google_maps_address|default:order.vendor.outlet_name }}
+                        {% else %}
+                            {{ order.delivery_address }}
+                        {% endif %}
+                    </p>
                 </div>
             </div>
         </div>
 
         <!-- Live Map Tracking -->
-        {% if not order_is_cancelled and order.delivery_status == 'OUT_FOR_DELIVERY' %}
+        {% if not order_is_cancelled and order.fulfillment_type == 'TAKEOUT' and vendor_location_json != 'null' %}
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">🧭 Takeout Route</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div id="delivery-map"></div>
+                </div>
+                <div class="tracking-stats">
+                    <div class="tracking-chip">
+                        <div class="tracking-chip-label">Outlet</div>
+                        <div class="tracking-chip-value">{{ order.vendor.outlet_name }}</div>
+                    </div>
+                    <div class="tracking-chip">
+                        <div class="tracking-chip-label">Route Status</div>
+                        <div class="tracking-chip-value" id="takeout-route-status">Allow location access to load a walking route.</div>
+                    </div>
+                    <div class="tracking-chip">
+                        <div class="tracking-chip-label">Maps</div>
+                        <div class="tracking-chip-value"><a id="takeout-google-maps-link" href="#" target="_blank" rel="noopener noreferrer">Open in Google Maps</a></div>
+                    </div>
+                </div>
+            </div>
+        {% elif not order_is_cancelled and order.delivery_status == 'OUT_FOR_DELIVERY' %}
             <div class="card mb-4">
                 <div class="card-header bg-primary text-white">
                     <h5 class="mb-0">📍 Live Delivery Tracking</h5>
@@ -406,15 +509,27 @@ document.addEventListener('DOMContentLoaded', function() {
                         </div>
                     </div>
 
-                    <!-- Delivery Status -->
+                    <!-- Fulfillment Status -->
                     <div class="timeline-item">
                         <div class="timeline-marker {% if order.delivery_status == 'DELIVERED' %}completed{% elif order.delivery_status == 'OUT_FOR_DELIVERY' %}active{% else %}pending{% endif %}">
                             {% if order.delivery_status == 'DELIVERED' %}✓{% else %}4{% endif %}
                         </div>
                         <div class="timeline-content">
-                            <div class="timeline-title">Delivery: {{ order.get_delivery_status_display }}</div>
+                            <div class="timeline-title">
+                                {% if order.fulfillment_type == 'TAKEOUT' %}
+                                    Pickup: {% if order.delivery_status == 'DELIVERED' %}Picked up{% else %}Awaiting pickup{% endif %}
+                                {% else %}
+                                    Delivery: {{ order.get_delivery_status_display }}
+                                {% endif %}
+                            </div>
                             {% if order_is_cancelled %}
-                                <div class="timeline-time">No delivery will be assigned for this order.</div>
+                                <div class="timeline-time">No {% if order.fulfillment_type == 'TAKEOUT' %}pickup{% else %}delivery{% endif %} will be assigned for this order.</div>
+                            {% elif order.fulfillment_type == 'TAKEOUT' and order.vendor_status != 'READY' %}
+                                <div class="timeline-time">Waiting for the vendor to prepare your order.</div>
+                            {% elif order.fulfillment_type == 'TAKEOUT' and order.delivery_status == 'DELIVERED' %}
+                                <div class="timeline-time">{{ order.updated_at|date:"M d, Y H:i" }}</div>
+                            {% elif order.fulfillment_type == 'TAKEOUT' %}
+                                <div class="timeline-time">Your order is ready to be collected from the outlet.</div>
                             {% elif order.delivery_status == 'OUT_FOR_DELIVERY' %}
                                 <div class="timeline-time">On the way to you...</div>
                             {% elif order.delivery_status == 'DELIVERED' %}
@@ -465,7 +580,18 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- Sidebar -->
     <div class="col-lg-4">
         <!-- Delivery Partner Info -->
-        {% if delivery_assignment and not order_is_cancelled %}
+        {% if order.fulfillment_type == 'TAKEOUT' and not order_is_cancelled %}
+            <div class="alert alert-info mb-4">
+                <h6 class="mb-2">🛍️ Takeout</h6>
+                <p class="mb-0">
+                    {% if order.vendor_status == 'READY' %}
+                        Your order is ready. Head to {{ order.vendor.outlet_name }} to collect it.
+                    {% else %}
+                        The vendor is preparing your order. This page will help you navigate once it is ready.
+                    {% endif %}
+                </p>
+            </div>
+        {% elif delivery_assignment and not order_is_cancelled %}
             <div class="card mb-4" style="border: 2px solid #28a745;">
                 <div class="card-header bg-success text-white">
                     <h5 class="mb-0">🚗 Your Delivery Partner</h5>
@@ -514,7 +640,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <strong>₹{{ order.total_amount }}</strong>
                 </div>
                 <div class="info-item">
-                    <span>Delivery</span>
+                    <span>{% if order.fulfillment_type == 'TAKEOUT' %}Takeout{% else %}Delivery{% endif %}</span>
                     <strong class="text-success">Free</strong>
                 </div>
                 <div class="info-item">
@@ -548,7 +674,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
                 <div class="info-item">
                     <span>Method</span>
-                    <strong>Razorpay</strong>
+                    <strong>{{ order.get_payment_method_display }}</strong>
                 </div>
                 {% if order.payment %}
                     <div class="info-item">

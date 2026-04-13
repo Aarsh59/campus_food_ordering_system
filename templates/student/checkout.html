@@ -100,6 +100,74 @@ const studentCheckoutState = {
     pendingCheckoutRecovery: null,
 };
 
+function getSelectedFulfillmentType() {
+    const selected = document.querySelector('input[name="fulfillment_type"]:checked');
+    return selected ? selected.value : 'DELIVERY';
+}
+
+function getSelectedPaymentMethod() {
+    const selected = document.querySelector('input[name="payment_method"]:checked');
+    return selected ? selected.value : 'RAZORPAY';
+}
+
+function syncCheckoutModeUi() {
+    const fulfillmentType = getSelectedFulfillmentType();
+    const paymentMethod = getSelectedPaymentMethod();
+    const deliverySection = document.getElementById('delivery-address-card');
+    const takeoutNotice = document.getElementById('takeout-notice');
+    const primaryButton = document.getElementById('checkout-submit-button');
+    const termsList = document.getElementById('checkout-terms-list');
+    const priceLabel = document.getElementById('checkout-fee-label');
+
+    if (deliverySection) {
+        deliverySection.classList.toggle('d-none', fulfillmentType !== 'DELIVERY');
+    }
+    if (takeoutNotice) {
+        takeoutNotice.classList.toggle('d-none', fulfillmentType !== 'TAKEOUT');
+    }
+    if (priceLabel) {
+        priceLabel.textContent = fulfillmentType === 'DELIVERY' ? 'Delivery Fee:' : 'Takeout Fee:';
+    }
+    if (primaryButton) {
+        if (paymentMethod === 'COD') {
+            primaryButton.textContent = fulfillmentType === 'TAKEOUT'
+                ? 'Place Takeout Order'
+                : 'Place Delivery Order';
+        } else {
+            primaryButton.textContent = 'Proceed to Razorpay Payment →';
+        }
+    }
+    if (termsList) {
+        const paymentText = paymentMethod === 'COD'
+            ? 'You will pay cash when the order is handed over'
+            : 'Payment will be processed through Razorpay';
+        const fulfillmentText = fulfillmentType === 'TAKEOUT'
+            ? 'You can collect the order by visiting the outlet'
+            : 'A delivery partner will pick up your food';
+        const guidanceText = fulfillmentType === 'TAKEOUT'
+            ? 'You will see Google Maps guidance to the vendor location after ordering'
+            : "You'll receive real-time tracking on your order";
+        termsList.innerHTML = `
+            <li>${paymentText}</li>
+            <li>Your food will be prepared by the vendors</li>
+            <li>${fulfillmentText}</li>
+            <li>${guidanceText}</li>
+            <li>Estimated ${fulfillmentType === 'TAKEOUT' ? 'pickup' : 'delivery'} time: 30-45 minutes</li>
+        `;
+    }
+}
+
+function bindCheckoutOptions() {
+    document.querySelectorAll('input[name="fulfillment_type"], input[name="payment_method"]').forEach((input) => {
+        if (input.dataset.bound === 'true') {
+            return;
+        }
+        input.addEventListener('change', syncCheckoutModeUi);
+        input.dataset.bound = 'true';
+    });
+    syncCheckoutModeUi();
+}
+
 function getPendingCheckoutPaymentSession() {
     try {
         const raw = window.sessionStorage.getItem(pendingCheckoutPaymentStorageKey);
@@ -360,14 +428,19 @@ async function refreshLocationPermissionState() {
 }
 
 function createOrder() {
+    const fulfillmentType = getSelectedFulfillmentType();
+    const paymentMethod = getSelectedPaymentMethod();
     const address = document.getElementById('delivery-address').value.trim();
-    if (!address) {
+
+    if (fulfillmentType === 'DELIVERY' && !address) {
         alert('Please enter your delivery address');
         return;
     }
 
     const form = new FormData();
     form.append('delivery_address', address);
+    form.append('fulfillment_type', fulfillmentType);
+    form.append('payment_method', paymentMethod);
 
     fetch('{% url "student_create_order" %}', {
         method: 'POST',
@@ -379,8 +452,16 @@ function createOrder() {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            persistPendingCheckoutPaymentSession(data);
-            initiatePayment(data);
+            if (data.requires_payment) {
+                persistPendingCheckoutPaymentSession(data);
+                initiatePayment(data);
+            } else {
+                clearPendingCheckoutPaymentSession();
+                clearStudentDeliveryMapState();
+                window.sessionStorage.removeItem(checkoutLocationStorageKey);
+                alert(data.message || 'Order placed successfully.');
+                window.location.href = '{% url "student_orders" %}';
+            }
         } else {
             alert('Error: ' + data.error);
         }
@@ -737,6 +818,7 @@ window.addEventListener('pageshow', (event) => {
     restoreCheckoutLocationUi();
     refreshLocationPermissionState();
     ensureStudentDeliveryMap(event.persisted || navType === 'reload' || navType === 'back_forward');
+    bindCheckoutOptions();
 });
 
 window.addEventListener('load', () => {
@@ -753,6 +835,7 @@ window.addEventListener('load', () => {
     restoreCheckoutLocationUi();
     refreshLocationPermissionState();
     ensureStudentDeliveryMap(false);
+    bindCheckoutOptions();
 });
 
 document.addEventListener('visibilitychange', () => {
@@ -763,8 +846,11 @@ document.addEventListener('visibilitychange', () => {
     restoreCheckoutLocationUi();
     refreshLocationPermissionState();
     ensureStudentDeliveryMap(true);
+    bindCheckoutOptions();
 });
 {% endif %}
+
+document.addEventListener('DOMContentLoaded', bindCheckoutOptions);
 </script>
 {% endblock %}
 
@@ -772,8 +858,26 @@ document.addEventListener('visibilitychange', () => {
 <div class="checkout-container">
     <h1 class="mb-4">Checkout</h1>
 
-    <!-- Delivery Address -->
     <div class="card mb-4">
+        <div class="card-header bg-dark text-white">
+            <h5 class="mb-0">🛍️ Order Type</h5>
+        </div>
+        <div class="card-body">
+            <label class="payment-method selected d-block">
+                <input class="form-check-input me-2" type="radio" name="fulfillment_type" value="DELIVERY" checked>
+                <strong>Delivery</strong>
+                <p class="text-muted mb-0">Get your order delivered to your IIT Kanpur location.</p>
+            </label>
+            <label class="payment-method d-block mb-0">
+                <input class="form-check-input me-2" type="radio" name="fulfillment_type" value="TAKEOUT">
+                <strong>Takeout</strong>
+                <p class="text-muted mb-0">Place the order now and collect it directly from the outlet.</p>
+            </label>
+        </div>
+    </div>
+
+    <!-- Delivery Address -->
+    <div class="card mb-4" id="delivery-address-card">
         <div class="card-header bg-primary text-white">
             <h5 class="mb-0">📍 Delivery Address</h5>
         </div>
@@ -799,6 +903,11 @@ document.addEventListener('visibilitychange', () => {
                 <small class="text-muted">Only IIT Kanpur campus addresses are allowed.</small>
             {% endif %}
         </div>
+    </div>
+
+    <div class="alert alert-info d-none" id="takeout-notice">
+        <h6 class="mb-2">📌 Takeout flow</h6>
+        <p class="mb-0">No delivery address is needed. After placing the order, you’ll get a Google Maps view that can guide you from your current location to the vendor.</p>
     </div>
 
     <!-- Order Summary by Vendor -->
@@ -835,7 +944,7 @@ document.addEventListener('visibilitychange', () => {
                 <span>₹{{ total_amount }}</span>
             </div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                <span>Delivery Fee:</span>
+                <span id="checkout-fee-label">Delivery Fee:</span>
                 <span class="text-success">Free</span>
             </div>
             <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
@@ -856,18 +965,25 @@ document.addEventListener('visibilitychange', () => {
             <h5 class="mb-0">💳 Payment Method</h5>
         </div>
         <div class="card-body">
-            <div class="payment-method selected">
+            <label class="payment-method selected d-block">
+                <input class="form-check-input me-2" type="radio" name="payment_method" value="RAZORPAY" checked>
                 <div class="payment-icon">💳</div>
                 <strong>Razorpay Payment Gateway</strong>
                 <p class="text-muted mb-0">Secure payment via all major cards, UPI, and net banking</p>
-            </div>
+            </label>
+            <label class="payment-method d-block mb-0">
+                <input class="form-check-input me-2" type="radio" name="payment_method" value="COD">
+                <div class="payment-icon">💵</div>
+                <strong>Cash on Delivery</strong>
+                <p class="text-muted mb-0">Pay in cash when your order is delivered or when you collect it for takeout</p>
+            </label>
         </div>
     </div>
 
     <!-- Order Terms -->
     <div class="alert alert-info">
         <h6 class="mb-2">ℹ️ Order Information</h6>
-        <ul class="mb-0" style="font-size: 0.95rem;">
+        <ul class="mb-0" style="font-size: 0.95rem;" id="checkout-terms-list">
             <li>Payment will be processed through Razorpay</li>
             <li>Your food will be prepared by the vendors</li>
             <li>A delivery partner will pick up your food</li>
@@ -878,7 +994,7 @@ document.addEventListener('visibilitychange', () => {
 
     <!-- Action Buttons -->
     <div class="d-grid gap-2">
-        <button class="btn btn-primary btn-lg" onclick="createOrder()">
+        <button class="btn btn-primary btn-lg" id="checkout-submit-button" onclick="createOrder()">
             Proceed to Razorpay Payment →
         </button>
         <a href="{% url 'student_view_cart' %}" class="btn btn-outline-secondary">

@@ -87,6 +87,14 @@
                         <strong>₹{{ order.total_amount }}</strong>
                     </div>
                     <div class="order-info-item">
+                        <span>Type:</span>
+                        <strong>{{ order.get_fulfillment_type_display }}</strong>
+                    </div>
+                    <div class="order-info-item">
+                        <span>Payment:</span>
+                        <strong>{{ order.get_payment_method_display }}</strong>
+                    </div>
+                    <div class="order-info-item">
                         <span>Status:</span>
                         <strong>{{ order.get_vendor_decision_display }}</strong>
                     </div>
@@ -97,9 +105,17 @@
                         </span>
                     </div>
                     <div class="order-info-item">
-                        <span>Delivery:</span>
+                        <span>{% if order.fulfillment_type == 'TAKEOUT' %}Pickup{% else %}Delivery{% endif %}:</span>
                         <span class="badge {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}bg-secondary{% else %}bg-warning{% endif %}">
-                            {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}Not applicable{% else %}{{ order.get_delivery_status_display }}{% endif %}
+                            {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}
+                                Not applicable
+                            {% elif order.fulfillment_type == 'TAKEOUT' and order.delivery_status == 'DELIVERED' %}
+                                Picked up
+                            {% elif order.fulfillment_type == 'TAKEOUT' %}
+                                Awaiting pickup
+                            {% else %}
+                                {{ order.get_delivery_status_display }}
+                            {% endif %}
                         </span>
                     </div>
                 </div>
@@ -108,10 +124,20 @@
                     <small class="text-muted d-block mb-3">
                         📍 {{ order.delivery_address }}
                     </small>
+                {% elif order.fulfillment_type == 'TAKEOUT' %}
+                    <small class="text-muted d-block mb-3">
+                        📍 Pickup from {{ order.vendor.outlet_name }}
+                    </small>
                 {% endif %}
                 
                 <a href="{% url 'student_order_detail' order.id %}" class="btn btn-primary btn-sm">
-                    {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}View Details{% else %}View Details & Track Delivery{% endif %}
+                    {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}
+                        View Details
+                    {% elif order.fulfillment_type == 'TAKEOUT' %}
+                        View Details & Pickup Route
+                    {% else %}
+                        View Details & Track Delivery
+                    {% endif %}
                 </a>
             </div>
         </div>

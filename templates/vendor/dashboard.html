@@ -181,6 +181,12 @@
                 <div class="text-muted">
                   Student: {{ order.student.username }} ({{ order.student.phone }}) | {{ order.student.email }}
                 </div>
+                <div class="text-muted mt-1">
+                  {{ order.get_fulfillment_type_display }} | {{ order.get_payment_method_display }}
+                  {% if order.delivery_address %}
+                    | {{ order.delivery_address }}
+                  {% endif %}
+                </div>
               </div>
               <div class="d-flex gap-2">
                 <form method="post" action="{% url 'vendor_ticket_accept' order.id %}">
@@ -226,6 +232,12 @@
             <div class="text-muted mb-2">
               Student: {{ order.student.username }} | Current Vendor Status: {{ order.get_vendor_status_display }}
             </div>
+            <div class="text-muted mb-2">
+              {{ order.get_fulfillment_type_display }} | {{ order.get_payment_method_display }}
+              {% if order.delivery_address %}
+                | {{ order.delivery_address }}
+              {% endif %}
+            </div>
 
             <form method="post" action="{% url 'vendor_order_status_update' order.id %}">
               {% csrf_token %}
@@ -246,12 +258,21 @@
 
             {% if order.vendor_status == 'READY' %}
             <div class="mt-2">
-              <form method="post" action="{% url 'vendor_broadcast_delivery' order.id %}" style="display: inline;">
-                {% csrf_token %}
-                <button class="btn btn-success" type="submit">
-                  📢 Broadcast to Delivery Partners
-                </button>
-              </form>
+              {% if order.fulfillment_type == 'TAKEOUT' %}
+                <form method="post" action="{% url 'vendor_mark_takeout_completed' order.id %}" style="display: inline;">
+                  {% csrf_token %}
+                  <button class="btn btn-success" type="submit">
+                    ✅ Mark Picked Up
+                  </button>
+                </form>
+              {% else %}
+                <form method="post" action="{% url 'vendor_broadcast_delivery' order.id %}" style="display: inline;">
+                  {% csrf_token %}
+                  <button class="btn btn-success" type="submit">
+                    📢 Broadcast to Delivery Partners
+                  </button>
+                </form>
+              {% endif %}
             </div>
             {% endif %}
 

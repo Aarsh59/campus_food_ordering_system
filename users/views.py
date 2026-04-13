@@ -960,6 +960,18 @@ def _notify_user(recipient: User, order: Order, message: str, email_subject: str
     return notification
 
 
+def _mark_order_payment_completed(order: Order):
+    """
+    Mark the order as paid when COD is collected at pickup or delivery completion.
+    """
+    if (
+        order.payment_method == Order.PaymentMethod.COD
+        and order.payment_status == Order.PaymentStatus.PENDING
+    ):
+        order.payment_status = Order.PaymentStatus.COMPLETED
+        order.save(update_fields=['payment_status', 'updated_at'])
+
+
 @login_required
 def vendor_ticket_accept(request, order_id: int):
     if request.user.role != User.Role.VENDOR:
@@ -1040,6 +1052,47 @@ def vendor_order_status_update(request, order_id: int):
     _notify_user(order.student, order, message, email_subject='Order Status Updated')
 
     messages.success(request, 'Order status updated. Student has been notified.')
+    return redirect('vendor_dashboard')
+
+
+@login_required
+@require_http_methods(["POST"])
+def vendor_mark_takeout_completed(request, order_id: int):
+    if request.user.role != User.Role.VENDOR:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+
+    vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
+    order = get_object_or_404(Order, pk=order_id, vendor=vendor_profile)
+
+    if order.fulfillment_type != Order.FulfillmentType.TAKEOUT:
+        messages.error(request, 'Only takeout orders can be marked as picked up here.')
+        return redirect('vendor_dashboard')
+
+    if order.vendor_decision != Order.VendorDecision.ACCEPTED:
+        messages.error(request, 'Only accepted orders can be completed.')
+        return redirect('vendor_dashboard')
+
+    if order.vendor_status != Order.VendorStatus.READY:
+        messages.error(request, 'Mark the takeout order as ready before confirming pickup.')
+        return redirect('vendor_dashboard')
+
+    if order.delivery_status == Order.DeliveryStatus.DELIVERED:
+        messages.info(request, 'This takeout order has already been completed.')
+        return redirect('vendor_dashboard')
+
+    order.delivery_status = Order.DeliveryStatus.DELIVERED
+    order.save(update_fields=['delivery_status', 'updated_at'])
+    _mark_order_payment_completed(order)
+
+    _notify_user(
+        order.student,
+        order,
+        f'Your takeout order {order.order_code} has been marked as picked up. Enjoy your meal!',
+        email_subject='Takeout Order Completed',
+    )
+
+    messages.success(request, 'Takeout order marked as picked up.')
     return redirect('vendor_dashboard')
 
 
@@ -1386,7 +1439,7 @@ def student_checkout(request):
 @login_required
 @require_http_methods(["POST"])
 def student_create_order(request):
-    """Create orders for each vendor and initiate Razorpay payment."""
+    """Create orders for each vendor and initiate payment if needed."""
     if request.user.role != User.Role.STUDENT:
         return JsonResponse({'error': 'Unauthorized'}, status=403)
     
@@ -1395,14 +1448,29 @@ def student_create_order(request):
     if not cart.items.exists():
         return JsonResponse({'error': 'Cart is empty'}, status=400)
     
+    fulfillment_type = request.POST.get('fulfillment_type', Order.FulfillmentType.DELIVERY).strip()
+    payment_method = request.POST.get('payment_method', Order.PaymentMethod.RAZORPAY).strip()
     delivery_address = request.POST.get('delivery_address', '').strip()
-    if not delivery_address:
-        return JsonResponse({'error': 'Delivery address is required'}, status=400)
 
-    try:
-        _, delivery_address, _ = _validate_iitk_location_from_address(delivery_address)
-    except Exception as exc:
-        return JsonResponse({'error': str(exc)}, status=400)
+    valid_fulfillment_types = {choice[0] for choice in Order.FulfillmentType.choices}
+    valid_payment_methods = {choice[0] for choice in Order.PaymentMethod.choices}
+
+    if fulfillment_type not in valid_fulfillment_types:
+        return JsonResponse({'error': 'Invalid fulfillment type selected'}, status=400)
+
+    if payment_method not in valid_payment_methods:
+        return JsonResponse({'error': 'Invalid payment method selected'}, status=400)
+
+    if fulfillment_type == Order.FulfillmentType.DELIVERY:
+        if not delivery_address:
+            return JsonResponse({'error': 'Delivery address is required'}, status=400)
+
+        try:
+            _, delivery_address, _ = _validate_iitk_location_from_address(delivery_address)
+        except Exception as exc:
+            return JsonResponse({'error': str(exc)}, status=400)
+    else:
+        delivery_address = ''
     
     cart_items = list(
         CartItem.objects.filter(cart=cart)
@@ -1417,23 +1485,23 @@ def student_create_order(request):
 
     total_amount = cart.get_total()
     
-    # Initialize Razorpay client
-    try:
-        razorpay_client = razorpay.Client(
-            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-        )
-    except Exception as e:
-        return JsonResponse({'error': 'Payment gateway not configured'}, status=500)
-    
-    # Create Razorpay order
-    try:
-        razorpay_order = razorpay_client.order.create({
-            'amount': int(total_amount * 100),  # Razorpay expects amount in paise
-            'currency': 'INR',
-            'payment_capture': '1',
-        })
-    except Exception as e:
-        return JsonResponse({'error': f'Failed to create payment order: {str(e)}'}, status=500)
+    razorpay_order = None
+    if payment_method == Order.PaymentMethod.RAZORPAY:
+        try:
+            razorpay_client = razorpay.Client(
+                auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+            )
+        except Exception:
+            return JsonResponse({'error': 'Payment gateway not configured'}, status=500)
+
+        try:
+            razorpay_order = razorpay_client.order.create({
+                'amount': int(total_amount * 100),
+                'currency': 'INR',
+                'payment_capture': '1',
+            })
+        except Exception as e:
+            return JsonResponse({'error': f'Failed to create payment order: {str(e)}'}, status=500)
     
     # Create master order record with payment info and reserve stock
     with transaction.atomic():
@@ -1458,6 +1526,13 @@ def student_create_order(request):
             menu_item = menu_items[cart_item.menu_item_id]
             if not menu_item.is_active:
                 return JsonResponse({'error': f'{menu_item.name} is no longer available.'}, status=400)
+            if (
+                fulfillment_type == Order.FulfillmentType.TAKEOUT
+                and (not menu_item.vendor.google_maps_location or not menu_item.vendor.google_maps_address)
+            ):
+                return JsonResponse({
+                    'error': f'{menu_item.vendor.outlet_name or "This vendor"} does not have a saved pickup location yet.'
+                }, status=400)
             try:
                 _validate_menu_item_quantity(menu_item, cart_item.quantity)
             except ValueError as exc:
@@ -1481,6 +1556,8 @@ def student_create_order(request):
                 total_amount=vendor_data['total'],
                 delivery_address=delivery_address,
                 payment_status=Order.PaymentStatus.PENDING,
+                fulfillment_type=fulfillment_type,
+                payment_method=payment_method,
             )
 
             for cart_item, menu_item in vendor_data['items']:
@@ -1494,17 +1571,35 @@ def student_create_order(request):
 
             orders.append(order)
 
-        Payment.objects.create(
-            order=orders[0],  # Associate with first order for tracking
-            student=request.user,
-            razorpay_order_id=razorpay_order['id'],
-            amount=total_amount,
-            currency='INR',
-            status=Payment.PaymentStatus.PENDING,
-        )
-    
+        if razorpay_order:
+            Payment.objects.create(
+                order=orders[0],
+                student=request.user,
+                razorpay_order_id=razorpay_order['id'],
+                amount=total_amount,
+                currency='INR',
+                status=Payment.PaymentStatus.PENDING,
+            )
+
+    if payment_method == Order.PaymentMethod.COD:
+        cart.items.all().delete()
+        for order in orders:
+            _notify_user(
+                request.user,
+                order,
+                f'Your {order.get_fulfillment_type_display().lower()} order {order.order_code} was placed with cash on delivery.',
+                email_subject='Order Placed',
+            )
+        return JsonResponse({
+            'success': True,
+            'requires_payment': False,
+            'message': 'Order placed successfully with cash on delivery.',
+            'orders': [o.id for o in orders],
+        })
+
     return JsonResponse({
         'success': True,
+        'requires_payment': True,
         'razorpay_order_id': razorpay_order['id'],
         'amount': int(total_amount * 100),
         'orders': [o.id for o in orders],
@@ -1680,6 +1775,12 @@ def student_order_detail(request, order_id: int):
                 student_location = {'lat': coords[0], 'lng': coords[1]}
         except Exception:
             student_location = None
+
+    vendor_location = None
+    if order.vendor.google_maps_location:
+        coords = _parse_google_maps_coordinates(order.vendor.google_maps_location)
+        if coords:
+            vendor_location = {'lat': coords[0], 'lng': coords[1]}
     
     return render(request, 'student/order_detail.html', {
         'order': order,
@@ -1689,6 +1790,7 @@ def student_order_detail(request, order_id: int):
         'order_is_cancelled': order_is_cancelled,
         'google_maps_api_key': settings.GOOGLE_MAPS_API_KEY,
         'student_location_json': json.dumps(student_location),
+        'vendor_location_json': json.dumps(vendor_location),
     })
 
 
@@ -1861,6 +1963,10 @@ def vendor_broadcast_delivery(request, order_id: int):
     
     if order.vendor_status != Order.VendorStatus.READY:
         messages.error(request, 'Order must be marked as ready first.')
+        return redirect('vendor_dashboard')
+
+    if order.fulfillment_type == Order.FulfillmentType.TAKEOUT:
+        messages.error(request, 'Takeout orders do not need delivery partners.')
         return redirect('vendor_dashboard')
     
     # Check if broadcast already exists
@@ -2257,6 +2363,7 @@ def delivery_mark_delivered(request, assignment_id: int):
     order = assignment.order
     order.delivery_status = Order.DeliveryStatus.DELIVERED
     order.save()
+    _mark_order_payment_completed(order)
     
     # Notify student
     _notify_user(
