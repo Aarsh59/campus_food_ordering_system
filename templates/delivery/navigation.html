@@ -49,6 +49,27 @@
         background-color: #fff3cd;
         color: #856404;
     }
+    .navigation-handoff {
+        background: linear-gradient(135deg, #f5fbff 0%, #eef7ef 100%);
+        border: 1px solid #d6e8da;
+        border-radius: 12px;
+        padding: 18px;
+        margin-bottom: 20px;
+    }
+    .navigation-handoff-title {
+        font-weight: 700;
+        margin-bottom: 8px;
+        color: #1f3b4d;
+    }
+    .navigation-handoff-copy {
+        color: #4d6470;
+        margin-bottom: 14px;
+    }
+    .navigation-handoff-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
 </style>
 <script>
 let map;
@@ -60,6 +81,9 @@ let customerMarker;
 let locationWatch;
 let routeThrottleTimer;
 let hasStartedWatch = false;
+let currentDriverLocation = null;
+let lastHiddenAt = null;
+let externalNavigationWasOpened = false;
 const deliveryLocationUpdateUrl = "{% url 'delivery_send_location' assignment.id %}";
 const vendorLoc = {{ vendor_location_json|safe }};
 const studentLoc = {{ student_location_json|safe }};
@@ -108,9 +132,11 @@ function beginLocationWatch(options) {
                 lat: position.coords.latitude,
                 lng: position.coords.longitude
             };
+            currentDriverLocation = currentLoc;
             updateCurrentLocation(currentLoc);
             scheduleRouteUpdate(currentLoc);
             sendLocationToServer(currentLoc, position.coords.accuracy);
+            syncExternalNavigationLink();
             setLocationStatus('Live tracking active');
         },
         function(error) {
@@ -130,9 +156,11 @@ function requestLocation(primaryOptions, fallbackOptions) {
                 lng: position.coords.longitude
             };
 
+            currentDriverLocation = currentLoc;
             updateCurrentLocation(currentLoc);
             calculateRoute(currentLoc);
             sendLocationToServer(currentLoc, position.coords.accuracy);
+            syncExternalNavigationLink();
             setLocationStatus('Live tracking active');
             beginLocationWatch(primaryOptions);
         },
@@ -157,6 +185,80 @@ function getActiveDestination() {
 
 function getActiveLegLabel() {
     return activeLeg === 'delivery' ? 'Delivery to Student' : 'Pickup from Vendor';
+}
+
+function getExternalNavigationUrl() {
+    const destination = getActiveDestination();
+    if (!destination) {
+        return '';
+    }
+
+    const params = new URLSearchParams({
+        api: '1',
+        destination: `${destination.lat},${destination.lng}`,
+        travelmode: 'driving',
+    });
+
+    if (currentDriverLocation) {
+        params.set('origin', `${currentDriverLocation.lat},${currentDriverLocation.lng}`);
+    }
+
+    return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
+function syncExternalNavigationLink() {
+    const link = document.getElementById('external-navigation-link');
+    if (!link) {
+        return;
+    }
+
+    const url = getExternalNavigationUrl();
+    if (!url) {
+        link.classList.add('disabled');
+        link.setAttribute('aria-disabled', 'true');
+        return;
+    }
+
+    link.href = url;
+    link.classList.remove('disabled');
+    link.removeAttribute('aria-disabled');
+}
+
+function markExternalNavigationState(isOpen) {
+    externalNavigationWasOpened = isOpen;
+
+    const helper = document.getElementById('navigation-handoff-helper');
+    const refreshButton = document.getElementById('refresh-after-navigation');
+    const openButton = document.getElementById('external-navigation-link');
+
+    if (helper) {
+        helper.textContent = isOpen
+            ? 'Google Maps was opened in a separate tab. Keep this page around so live tracking continues, then come back here whenever you need to refresh the order state.'
+            : 'Use Google Maps for turn-by-turn driving directions, and keep this page available so the student keeps receiving live tracking updates.';
+    }
+
+    if (refreshButton) {
+        refreshButton.classList.toggle('d-none', !isOpen);
+    }
+
+    if (openButton) {
+        openButton.textContent = isOpen ? 'Open Google Maps Again' : 'Open Turn-by-Turn Navigation';
+    }
+}
+
+function openExternalNavigation() {
+    const url = getExternalNavigationUrl();
+    if (!url) {
+        alert('Navigation is not ready yet. Please wait for your current location.');
+        return;
+    }
+
+    markExternalNavigationState(true);
+    window.open(url, '_blank', 'noopener');
+}
+
+function refreshNavigationPage() {
+    window.location.reload();
 }
 
 function initMap() {
@@ -200,6 +302,8 @@ function initMap() {
         activeLeg === 'delivery'
             ? '{{ order.delivery_address|default:"Delivery address unavailable"|escapejs }}'
             : '{{ order.vendor.google_maps_address|default:order.vendor.outlet_name|escapejs }}';
+
+    syncExternalNavigationLink();
 
     // Start tracking current location
     startLocationTracking();
@@ -314,6 +418,24 @@ function retryLocationTracking() {
 // Initialize map when page loads
 document.addEventListener('DOMContentLoaded', function() {
     initMap();
+    markExternalNavigationState(false);
+});
+
+window.addEventListener('pageshow', function(event) {
+    if (event.persisted) {
+        window.location.reload();
+    }
+});
+
+document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden') {
+        lastHiddenAt = Date.now();
+        return;
+    }
+
+    if (lastHiddenAt && Date.now() - lastHiddenAt > 3000) {
+        window.location.reload();
+    }
 });
 
 // Clean up when leaving page
@@ -333,6 +455,18 @@ window.addEventListener('beforeunload', function() {
 <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
     <span id="location-status" class="status-badge status-map">📍 LIVE TRACKING ACTIVE</span>
     <button type="button" class="btn btn-outline-primary btn-sm" onclick="retryLocationTracking()">Retry Location</button>
+    <button type="button" class="btn btn-success btn-sm" onclick="openExternalNavigation()">Open In Google Maps</button>
+</div>
+
+<div class="navigation-handoff">
+    <div class="navigation-handoff-title">Navigation Mode</div>
+    <div class="navigation-handoff-copy" id="navigation-handoff-helper">
+        Use Google Maps for turn-by-turn driving directions, and keep this page available so the student keeps receiving live tracking updates.
+    </div>
+    <div class="navigation-handoff-actions">
+        <button type="button" class="btn btn-success" onclick="openExternalNavigation()">Start Navigation</button>
+        <button type="button" class="btn btn-outline-secondary d-none" id="refresh-after-navigation" onclick="refreshNavigationPage()">Return To Tracking</button>
+    </div>
 </div>
 
 <!-- Map -->
@@ -417,6 +551,9 @@ window.addEventListener('beforeunload', function() {
 
         <!-- Actions -->
         <div class="mt-4">
+            <a id="external-navigation-link" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-success w-100 mb-2">
+                Open Turn-by-Turn Navigation
+            </a>
             <a href="{% url 'delivery_available_orders' %}" class="btn btn-outline-primary w-100">
                 ← Back to Dashboard
             </a>

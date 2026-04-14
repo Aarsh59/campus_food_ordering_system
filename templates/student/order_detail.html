@@ -141,6 +141,22 @@
         font-weight: 700;
         color: #212529;
     }
+    .navigation-handoff {
+        background: linear-gradient(135deg, #f5fbff 0%, #eef7ef 100%);
+        border: 1px solid #d6e8da;
+        border-radius: 12px;
+        padding: 18px;
+        margin-bottom: 20px;
+    }
+    .navigation-handoff-title {
+        font-weight: 700;
+        margin-bottom: 8px;
+        color: #1f3b4d;
+    }
+    .navigation-handoff-copy {
+        color: #4d6470;
+        margin-bottom: 14px;
+    }
 </style>
 <script>
 let map;
@@ -149,6 +165,8 @@ let polyline;
 let trackingRefreshTimer;
 let takeoutDirectionsRenderer;
 let takeoutLocationWatch;
+let lastHiddenAt = null;
+let takeoutNavigationWasOpened = false;
 const studentLocation = {{ student_location_json|default:"null"|safe }};
 const vendorLocation = {{ vendor_location_json|default:"null"|safe }};
 const isTakeout = {% if order.fulfillment_type == 'TAKEOUT' %}true{% else %}false{% endif %};
@@ -299,7 +317,13 @@ function initializeTakeoutRoute(destination) {
             params.set('origin', `${origin.lat},${origin.lng}`);
         }
 
-        routeLink.href = `https://www.google.com/maps/dir/?${params.toString()}`;
+        const url = `https://www.google.com/maps/dir/?${params.toString()}`;
+        routeLink.href = url;
+
+        const sidebarLink = document.getElementById('takeout-google-maps-link-sidebar');
+        if (sidebarLink) {
+            sidebarLink.href = url;
+        }
     }
 
     function renderRoute(origin, accuracy) {
@@ -412,9 +436,57 @@ function initializeTakeoutRoute(destination) {
     );
 }
 
+function markTakeoutNavigationState(isOpen) {
+    takeoutNavigationWasOpened = isOpen;
+
+    const helper = document.getElementById('takeout-navigation-helper');
+    const refreshButton = document.getElementById('refresh-after-takeout-navigation');
+    const openButton = document.getElementById('takeout-google-maps-link-sidebar');
+
+    if (helper) {
+        helper.textContent = isOpen
+            ? 'Google Maps was opened in a separate tab. Come back here any time to refresh your live location and the latest order status.'
+            : 'Open Google Maps for turn-by-turn pickup directions, then return here whenever you want a refreshed order page.';
+    }
+
+    if (refreshButton) {
+        refreshButton.classList.toggle('d-none', !isOpen);
+    }
+
+    if (openButton) {
+        openButton.textContent = isOpen ? 'Open Google Maps Again' : 'Start Pickup Navigation';
+    }
+}
+
+function handleTakeoutNavigationClick() {
+    markTakeoutNavigationState(true);
+}
+
+function refreshTakeoutPage() {
+    window.location.reload();
+}
+
 // Initialize map when page loads
 document.addEventListener('DOMContentLoaded', function() {
     initMap();
+    markTakeoutNavigationState(false);
+});
+
+window.addEventListener('pageshow', function(event) {
+    if (event.persisted) {
+        window.location.reload();
+    }
+});
+
+document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden') {
+        lastHiddenAt = Date.now();
+        return;
+    }
+
+    if (lastHiddenAt && Date.now() - lastHiddenAt > 3000) {
+        window.location.reload();
+    }
 });
 </script>
 {% endblock %}
@@ -508,7 +580,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                     <div class="tracking-chip">
                         <div class="tracking-chip-label">Maps</div>
-                        <div class="tracking-chip-value"><a id="takeout-google-maps-link" href="#" target="_blank" rel="noopener noreferrer">Open in Google Maps</a></div>
+                        <div class="tracking-chip-value"><a id="takeout-google-maps-link" href="#" target="_blank" rel="noopener noreferrer">Open turn-by-turn navigation</a></div>
                     </div>
                 </div>
             </div>
@@ -674,6 +746,23 @@ document.addEventListener('DOMContentLoaded', function() {
                         The vendor is preparing your order. This page will help you navigate once it is ready.
                     {% endif %}
                 </p>
+            </div>
+            <div class="navigation-handoff">
+                <div class="navigation-handoff-title">Pickup Navigation</div>
+                <div class="navigation-handoff-copy" id="takeout-navigation-helper">
+                    Open Google Maps for turn-by-turn pickup directions, then return here whenever you want a refreshed order page.
+                </div>
+                <div class="d-flex gap-2 flex-wrap">
+                    <a id="takeout-google-maps-link-sidebar" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-success" onclick="handleTakeoutNavigationClick()">
+                        Start Pickup Navigation
+                    </a>
+                    <button type="button" id="refresh-after-takeout-navigation" class="btn btn-outline-secondary d-none" onclick="refreshTakeoutPage()">
+                        Refresh After Return
+                    </button>
+                </div>
+            </div>
+            <div class="d-grid gap-2 mb-4">
+                <small class="text-muted">When you come back from navigation, this page refreshes automatically so your location and order state are updated.</small>
             </div>
         {% elif delivery_assignment and not order_is_cancelled %}
             <div class="card mb-4" style="border: 2px solid #28a745;">
