@@ -80,6 +80,7 @@
 const deliveryAcceptUrlTemplate = "{% url 'delivery_accept_broadcast' 0 %}";
 const deliveryRejectUrlTemplate = "{% url 'delivery_reject_broadcast' 0 %}";
 const deliveryNavigationUrlTemplate = "{% url 'delivery_navigation' 0 %}";
+const deliveryAssignmentRejectUrlTemplate = "{% url 'delivery_reject_assignment' 0 %}";
 const deliveryPickedUpUrlTemplate = "{% url 'delivery_mark_picked_up' 0 %}";
 const deliveryOutForDeliveryUrlTemplate = "{% url 'delivery_start_delivery' 0 %}";
 const deliveryDeliveredUrlTemplate = "{% url 'delivery_mark_delivered' 0 %}";
@@ -157,6 +158,35 @@ function rejectBroadcast(broadcastId) {
 
 function startNavigation(assignmentId) {
     window.location.href = withId(deliveryNavigationUrlTemplate, assignmentId);
+}
+
+function rejectAssignment(assignmentId) {
+    const reason = prompt('Why are you rejecting this accepted delivery?');
+    if (reason === null) {
+        return;
+    }
+
+    const form = new FormData();
+    form.append('reason', reason);
+    fetch(withId(deliveryAssignmentRejectUrlTemplate, assignmentId), {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCsrfToken(),
+        },
+        body: form
+    })
+    .then(readJsonResponse)
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(err => {
+        alert('Error rejecting assignment: ' + err);
+    });
 }
 
 function markPickedUp(assignmentId) {
@@ -339,6 +369,9 @@ function markDelivered(assignmentId) {
                             </button>
                             <button class="btn btn-info btn-sm" onclick="markPickedUp({{ assignment.id }})">
                                 📦 Picked Up
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm" onclick="rejectAssignment({{ assignment.id }})">
+                                ✗ Reject & Cancel
                             </button>
                         {% elif assignment.status == 'PICKED_UP' %}
                             <button class="btn btn-warning btn-sm" onclick="markOutForDelivery({{ assignment.id }})">

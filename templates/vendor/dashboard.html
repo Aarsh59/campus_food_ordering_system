@@ -170,6 +170,9 @@
 
 <div class="tab-content">
   <div class="tab-pane fade show active" id="tickets" role="tabpanel" aria-labelledby="tickets-tab">
+    <div class="alert alert-info mb-3">
+      <strong>Incoming Ticket Workflow:</strong> Accept or reject orders immediately when they arrive. Rejected orders will trigger automatic refunds for Razorpay payments.
+    </div>
     <div class="row g-3">
       {% for order in incoming_tickets %}
       <div class="col-12">
@@ -223,27 +226,48 @@
   </div>
 
   <div class="tab-pane fade" id="status" role="tabpanel" aria-labelledby="status-tab">
+    <div class="alert alert-info mb-3">
+      <strong>Order Preparation & Post-Acceptance Rejection:</strong> Update order status as you prepare it. If you're unable to complete an accepted order, use the reject button to cancel it. Razorpay-paid orders will receive automatic full refunds.
+    </div>
     <div class="row g-3">
       {% for order in accepted_orders %}
       <div class="col-12">
         <div class="card">
           <div class="card-body">
-            <h5 class="mb-1">Order {{ order.order_code }}</h5>
-            <div class="text-muted mb-2">
-              Student: {{ order.student.username }} | Current Vendor Status: {{ order.get_vendor_status_display }}
-            </div>
-            <div class="text-muted mb-2">
-              {{ order.get_fulfillment_type_display }} | {{ order.get_payment_method_display }}
-              {% if order.delivery_address %}
-                | {{ order.delivery_address }}
+            <div class="d-flex justify-content-between align-items-start gap-3">
+              <div>
+                <h5 class="mb-1">Order {{ order.order_code }}</h5>
+                <div class="text-muted mb-2">
+                  Student: {{ order.student.username }} | Current Status: <strong>{{ order.get_vendor_status_display }}</strong>
+                </div>
+                <div class="text-muted mb-2">
+                  {{ order.get_fulfillment_type_display }} | {{ order.get_payment_method_display }}
+                  {% if order.delivery_address %}
+                    | {{ order.delivery_address }}
+                  {% endif %}
+                </div>
+              </div>
+              
+              <!-- Post-Acceptance Rejection Button -->
+              {% if order.delivery_status != 'DELIVERED' and order.delivery_assignment.status|default:'' != 'PICKED_UP' and order.delivery_assignment.status|default:'' != 'OUT_FOR_DELIVERY' %}
+              <div>
+                <form method="post" action="{% url 'vendor_ticket_reject' order.id %}" style="margin: 0;">
+                  {% csrf_token %}
+                  <button class="btn btn-outline-danger btn-sm" type="submit" title="Reject this accepted order (full refund if paid via Razorpay)">
+                    ✗ Reject Order
+                  </button>
+                </form>
+              </div>
               {% endif %}
             </div>
+
+            <hr>
 
             <form method="post" action="{% url 'vendor_order_status_update' order.id %}">
               {% csrf_token %}
               <div class="row g-2 align-items-end">
                 <div class="col-md-4">
-                  <label class="form-label">Set Status</label>
+                  <label class="form-label">Update Preparation Status</label>
                   <select class="form-select" name="vendor_status" required>
                     <option value="NOT_STARTED" {% if order.vendor_status == 'NOT_STARTED' %}selected{% endif %}>Not started</option>
                     <option value="PREPARING" {% if order.vendor_status == 'PREPARING' %}selected{% endif %}>Preparing</option>
@@ -251,13 +275,13 @@
                   </select>
                 </div>
                 <div class="col-md-2">
-                  <button class="btn btn-primary" type="submit">Update</button>
+                  <button class="btn btn-primary" type="submit">Update Status</button>
                 </div>
               </div>
             </form>
 
             {% if order.vendor_status == 'READY' %}
-            <div class="mt-2">
+            <div class="mt-3">
               {% if order.fulfillment_type == 'TAKEOUT' %}
                 <form method="post" action="{% url 'vendor_mark_takeout_completed' order.id %}" style="display: inline;">
                   {% csrf_token %}
@@ -278,7 +302,7 @@
 
             <hr>
             <div>
-              <strong>Items</strong>
+              <strong>Order Items</strong>
               <ul class="mb-0">
                 {% for it in order.items.all %}
                   <li>

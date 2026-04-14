@@ -67,11 +67,13 @@
                 </div>
                 <div style="text-align: right;">
                     <div class="mb-2">
-                        <span class="status-badge {% if order.vendor_decision == 'REJECTED' or order.vendor_status == 'CANCELLED' or order.payment_status == 'FAILED' %}status-failed{% else %}status-{{ order.get_payment_status_display|lower }}{% endif %}">
+                        <span class="status-badge {% if order.vendor_decision == 'REJECTED' or order.vendor_status == 'CANCELLED' or order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' %}status-failed{% else %}status-{{ order.get_payment_status_display|lower }}{% endif %}">
                             {% if order.vendor_decision == 'REJECTED' %}
                                 Rejected
                             {% elif order.vendor_status == 'CANCELLED' %}
                                 Cancelled
+                            {% elif order.payment_status == 'REFUNDED' %}
+                                Refunded
                             {% else %}
                                 {{ order.get_payment_status_display }}
                             {% endif %}
@@ -100,14 +102,14 @@
                     </div>
                     <div class="order-info-item">
                         <span>Preparation:</span>
-                        <span class="badge {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' %}bg-danger{% else %}bg-info{% endif %}">
-                            {% if order.payment_status == 'FAILED' %}Not started{% else %}{{ order.get_vendor_status_display }}{% endif %}
+                        <span class="badge {% if order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' or order.vendor_status == 'CANCELLED' %}bg-danger{% else %}bg-info{% endif %}">
+                            {% if order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' %}Not started{% else %}{{ order.get_vendor_status_display }}{% endif %}
                         </span>
                     </div>
                     <div class="order-info-item">
                         <span>{% if order.fulfillment_type == 'TAKEOUT' %}Pickup{% else %}Delivery{% endif %}:</span>
-                        <span class="badge {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}bg-secondary{% else %}bg-warning{% endif %}">
-                            {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}
+                        <span class="badge {% if order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}bg-secondary{% else %}bg-warning{% endif %}">
+                            {% if order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}
                                 Not applicable
                             {% elif order.fulfillment_type == 'TAKEOUT' and order.delivery_status == 'DELIVERED' %}
                                 Picked up
@@ -131,7 +133,7 @@
                 {% endif %}
                 
                 <a href="{% url 'student_order_detail' order.id %}" class="btn btn-primary btn-sm">
-                    {% if order.payment_status == 'FAILED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}
+                    {% if order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' or order.vendor_status == 'CANCELLED' or order.vendor_decision == 'REJECTED' %}
                         View Details
                     {% elif order.fulfillment_type == 'TAKEOUT' %}
                         View Details & Pickup Route

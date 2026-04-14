@@ -163,7 +163,7 @@
                                         <td>{{ order.vendor.outlet_name }}</td>
                                         <td>₹{{ order.total_amount }}</td>
                                         <td>
-                                            <span class="badge {% if order.vendor_decision == 'REJECTED' or order.vendor_status == 'CANCELLED' %}bg-danger{% elif order.payment_status == 'COMPLETED' %}bg-success{% elif order.payment_status == 'FAILED' %}bg-danger{% else %}bg-warning{% endif %}">
+                                            <span class="badge {% if order.vendor_decision == 'REJECTED' or order.vendor_status == 'CANCELLED' %}bg-danger{% elif order.payment_status == 'COMPLETED' %}bg-success{% elif order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' %}bg-danger{% else %}bg-warning{% endif %}">
                                                 {% if order.vendor_decision == 'REJECTED' %}
                                                     Rejected
                                                 {% elif order.vendor_status == 'CANCELLED' %}

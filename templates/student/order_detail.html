@@ -510,6 +510,8 @@ document.addEventListener('visibilitychange', function() {
         <strong>Order cancelled.</strong>
         {% if order.payment_status == 'FAILED' %}
             Payment was not completed, so this order will not be prepared or delivered.
+        {% elif order.payment_status == 'REFUNDED' %}
+            Your Razorpay payment has been refunded back to the original payment method.
         {% elif order.vendor_decision == 'REJECTED' %}
             The vendor rejected this order.
         {% else %}
@@ -618,8 +620,8 @@ document.addEventListener('visibilitychange', function() {
                 <div class="order-timeline">
                     <!-- Payment Status -->
                     <div class="timeline-item">
-                        <div class="timeline-marker {% if order.payment_status == 'COMPLETED' %}completed{% elif order.payment_status == 'FAILED' %}active{% else %}pending{% endif %}">
-                            {% if order.payment_status == 'COMPLETED' %}✓{% elif order.payment_status == 'FAILED' %}!{% else %}1{% endif %}
+                        <div class="timeline-marker {% if order.payment_status == 'COMPLETED' %}completed{% elif order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' %}active{% else %}pending{% endif %}">
+                            {% if order.payment_status == 'COMPLETED' %}✓{% elif order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' %}!{% else %}1{% endif %}
                         </div>
                         <div class="timeline-content">
                             <div class="timeline-title">Payment {{ order.get_payment_status_display }}</div>
@@ -629,7 +631,7 @@ document.addEventListener('visibilitychange', function() {
 
                     <!-- Vendor Decision -->
                     <div class="timeline-item">
-                        <div class="timeline-marker {% if order.vendor_decision == 'ACCEPTED' %}completed{% elif order.vendor_decision == 'REJECTED' %}active{% elif order.payment_status == 'FAILED' %}pending{% else %}pending{% endif %}">
+                        <div class="timeline-marker {% if order.vendor_decision == 'ACCEPTED' %}completed{% elif order.vendor_decision == 'REJECTED' %}active{% elif order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' %}pending{% else %}pending{% endif %}">
                             {% if order.vendor_decision == 'ACCEPTED' %}✓{% elif order.vendor_decision == 'REJECTED' %}!{% else %}2{% endif %}
                         </div>
                         <div class="timeline-content">
@@ -640,6 +642,8 @@ document.addEventListener('visibilitychange', function() {
                                 <div class="timeline-time">The vendor rejected this order.</div>
                             {% elif order.payment_status == 'FAILED' %}
                                 <div class="timeline-time">Skipped because payment was not completed.</div>
+                            {% elif order.payment_status == 'REFUNDED' %}
+                                <div class="timeline-time">The order was cancelled and refunded.</div>
                             {% else %}
                                 <div class="timeline-time">Waiting for vendor response...</div>
                             {% endif %}
@@ -657,6 +661,8 @@ document.addEventListener('visibilitychange', function() {
                                 <div class="timeline-time">Preparation was cancelled.</div>
                             {% elif order.payment_status == 'FAILED' %}
                                 <div class="timeline-time">Skipped because payment was not completed.</div>
+                            {% elif order.payment_status == 'REFUNDED' %}
+                                <div class="timeline-time">Preparation stopped because the order was refunded.</div>
                             {% elif order.vendor_status != 'NOT_STARTED' %}
                                 <div class="timeline-time">In progress...</div>
                             {% else %}
@@ -835,7 +841,7 @@ document.addEventListener('visibilitychange', function() {
             <div class="card-body">
                 <div class="info-item">
                     <span>Status</span>
-                    <span class="badge {% if order.vendor_decision == 'REJECTED' or order.vendor_status == 'CANCELLED' or order.payment_status == 'FAILED' %}bg-danger{% elif order.payment_status == 'COMPLETED' %}bg-success{% else %}bg-warning{% endif %}">
+                    <span class="badge {% if order.vendor_decision == 'REJECTED' or order.vendor_status == 'CANCELLED' or order.payment_status == 'FAILED' or order.payment_status == 'REFUNDED' %}bg-danger{% elif order.payment_status == 'COMPLETED' %}bg-success{% else %}bg-warning{% endif %}">
                         {% if order.vendor_decision == 'REJECTED' %}
                             Rejected
                         {% elif order.vendor_status == 'CANCELLED' %}

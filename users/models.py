@@ -320,6 +320,7 @@ class Order(models.Model):
         PENDING = 'PENDING', 'Pending'
         COMPLETED = 'COMPLETED', 'Completed'
         FAILED = 'FAILED', 'Failed'
+        REFUNDED = 'REFUNDED', 'Refunded'
 
     class FulfillmentType(models.TextChoices):
         DELIVERY = 'DELIVERY', 'Delivery'
@@ -490,6 +491,7 @@ class Payment(models.Model):
         SUCCESS = 'SUCCESS', 'Success'
         FAILED = 'FAILED', 'Failed'
         CANCELLED = 'CANCELLED', 'Cancelled'
+        REFUNDED = 'REFUNDED', 'Refunded'
 
     order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='payment')
     student = models.ForeignKey('User', on_delete=models.CASCADE, related_name='payments')
@@ -498,6 +500,9 @@ class Payment(models.Model):
     razorpay_order_id = models.CharField(max_length=100, blank=True)
     razorpay_payment_id = models.CharField(max_length=100, blank=True)
     razorpay_signature = models.CharField(max_length=200, blank=True)
+    razorpay_refund_id = models.CharField(max_length=100, blank=True)
+    refund_reason = models.CharField(max_length=255, blank=True)
+    refunded_at = models.DateTimeField(null=True, blank=True)
     
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, default='INR')

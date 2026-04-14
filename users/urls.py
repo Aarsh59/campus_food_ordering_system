@@ -11,6 +11,10 @@ urlpatterns = [
     path('apply/',             views.apply_view,         name='apply'),
     path('pending/',           views.pending_view,       name='pending'),
     
+    # Admin Application Review
+    path('admin/applications/', views.admin_applications_list, name='admin_applications_list'),
+    path('admin/applications/<int:application_id>/', views.admin_application_detail, name='admin_application_detail'),
+    
     # Student Dashboard & Ordering
     path('student/dashboard/', views.student_dashboard,  name='student_dashboard'),
     path('student/vendors/', views.student_vendors_list, name='student_vendors_list'),
@@ -49,6 +53,7 @@ urlpatterns = [
     path('delivery/available-orders/', views.delivery_available_orders, name='delivery_available_orders'),
     path('delivery/broadcast/<int:broadcast_id>/accept/', views.delivery_accept_broadcast, name='delivery_accept_broadcast'),
     path('delivery/broadcast/<int:broadcast_id>/reject/', views.delivery_reject_broadcast, name='delivery_reject_broadcast'),
+    path('delivery/assignment/<int:assignment_id>/reject/', views.delivery_reject_assignment, name='delivery_reject_assignment'),
     path('delivery/assignment/<int:assignment_id>/navigation/', views.delivery_navigation, name='delivery_navigation'),
     path('delivery/assignment/<int:assignment_id>/picked-up/', views.delivery_mark_picked_up, name='delivery_mark_picked_up'),
     path('delivery/assignment/<int:assignment_id>/out-for-delivery/', views.delivery_start_delivery, name='delivery_start_delivery'),

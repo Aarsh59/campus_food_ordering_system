@@ -1799,6 +1799,72 @@ class VendorOrderManagementTest(TestCase):
         menu_item.refresh_from_db()
         self.assertEqual(menu_item.stock, 5)
 
+    @patch('users.views.razorpay.Client')
+    def test_vendor_can_reject_accepted_order_and_trigger_refund(self, mock_razorpay_client):
+        self.order.vendor_decision = Order.VendorDecision.ACCEPTED
+        self.order.payment_method = Order.PaymentMethod.RAZORPAY
+        self.order.payment_status = Order.PaymentStatus.COMPLETED
+        self.order.save()
+        Payment.objects.create(
+            order=self.order,
+            student=self.student,
+            razorpay_order_id='order_vendor_refund_123',
+            razorpay_payment_id='pay_vendor_refund_123',
+            amount=self.order.total_amount,
+            currency='INR',
+            status=Payment.PaymentStatus.SUCCESS,
+        )
+        mock_client_instance = mock_razorpay_client.return_value
+        mock_client_instance.payment.refund.return_value = {
+            'id': 'rfnd_vendor_123',
+            'status': 'processed',
+        }
+
+        response = self.client.post(reverse('vendor_ticket_reject', args=[self.order.id]), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.order.refresh_from_db()
+        payment = Payment.objects.get(order=self.order)
+        self.assertEqual(self.order.vendor_decision, Order.VendorDecision.REJECTED)
+        self.assertEqual(self.order.payment_status, Order.PaymentStatus.REFUNDED)
+        self.assertEqual(payment.status, Payment.PaymentStatus.REFUNDED)
+        self.assertEqual(payment.razorpay_refund_id, 'rfnd_vendor_123')
+        mock_client_instance.payment.refund.assert_called_once()
+
+    @patch('users.views.razorpay.Client')
+    def test_vendor_reject_is_blocked_after_pickup(self, mock_razorpay_client):
+        self.order.vendor_decision = Order.VendorDecision.ACCEPTED
+        self.order.payment_method = Order.PaymentMethod.RAZORPAY
+        self.order.payment_status = Order.PaymentStatus.COMPLETED
+        self.order.save()
+        Payment.objects.create(
+            order=self.order,
+            student=self.student,
+            razorpay_order_id='order_blocked_refund_123',
+            razorpay_payment_id='pay_blocked_refund_123',
+            amount=self.order.total_amount,
+            currency='INR',
+            status=Payment.PaymentStatus.SUCCESS,
+        )
+        delivery_user = User.objects.create_user(
+            username='delivery_blocked',
+            password='Test@1234',
+            phone='8888888888',
+            role=User.Role.DELIVERY,
+        )
+        DeliveryAssignment.objects.create(
+            order=self.order,
+            delivery_partner=delivery_user,
+            status=DeliveryAssignment.AssignmentStatus.PICKED_UP,
+        )
+
+        response = self.client.post(reverse('vendor_ticket_reject', args=[self.order.id]), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.vendor_decision, Order.VendorDecision.ACCEPTED)
+        mock_razorpay_client.return_value.payment.refund.assert_not_called()
+
     def test_update_order_status(self):
         self.order.vendor_decision = Order.VendorDecision.ACCEPTED
         self.order.save()
@@ -2109,6 +2175,54 @@ class DeliveryAssignmentTest(TestCase):
         self.assertEqual(self.assignment.status, DeliveryAssignment.AssignmentStatus.DELIVERED)
         self.order.refresh_from_db()
         self.assertEqual(self.order.delivery_status, Order.DeliveryStatus.DELIVERED)
+
+    @patch('users.views.razorpay.Client')
+    def test_delivery_partner_can_reject_accepted_assignment_and_trigger_refund(self, mock_razorpay_client):
+        self.order.vendor_decision = Order.VendorDecision.ACCEPTED
+        self.order.payment_method = Order.PaymentMethod.RAZORPAY
+        self.order.payment_status = Order.PaymentStatus.COMPLETED
+        self.order.save()
+        Payment.objects.create(
+            order=self.order,
+            student=self.student,
+            razorpay_order_id='order_delivery_refund_123',
+            razorpay_payment_id='pay_delivery_refund_123',
+            amount=self.order.total_amount,
+            currency='INR',
+            status=Payment.PaymentStatus.SUCCESS,
+        )
+        mock_client_instance = mock_razorpay_client.return_value
+        mock_client_instance.payment.refund.return_value = {
+            'id': 'rfnd_delivery_123',
+            'status': 'processed',
+        }
+
+        response = self.client.post(reverse('delivery_reject_assignment', args=[self.assignment.id]), {
+            'reason': 'Vehicle issue',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assignment.refresh_from_db()
+        self.order.refresh_from_db()
+        payment = Payment.objects.get(order=self.order)
+        self.assertEqual(self.assignment.status, DeliveryAssignment.AssignmentStatus.CANCELLED)
+        self.assertEqual(self.order.vendor_decision, Order.VendorDecision.REJECTED)
+        self.assertEqual(self.order.payment_status, Order.PaymentStatus.REFUNDED)
+        self.assertEqual(payment.status, Payment.PaymentStatus.REFUNDED)
+        self.assertEqual(payment.razorpay_refund_id, 'rfnd_delivery_123')
+        mock_client_instance.payment.refund.assert_called_once()
+
+    def test_delivery_partner_cannot_reject_after_pickup(self):
+        self.assignment.status = DeliveryAssignment.AssignmentStatus.PICKED_UP
+        self.assignment.save()
+
+        response = self.client.post(reverse('delivery_reject_assignment', args=[self.assignment.id]), {
+            'reason': 'Too late',
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assignment.refresh_from_db()
+        self.assertEqual(self.assignment.status, DeliveryAssignment.AssignmentStatus.PICKED_UP)
 
     @patch('users.views._generate_google_maps_link_from_address')
     def test_navigation_switches_to_student_after_pickup(self, mock_generate_maps_link):

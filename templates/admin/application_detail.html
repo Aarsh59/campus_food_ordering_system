@@ -1,0 +1,302 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ application.full_name }} - Application Review{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row mb-4">
+        <div class="col-12">
+            <a href="{% url 'admin_applications_list' %}" class="btn btn-outline-secondary mb-3">
+                <i class="bi bi-arrow-left"></i> Back to Applications
+            </a>
+            <h1 class="mb-1">{{ application.full_name }}</h1>
+            <p class="text-muted">
+                <span class="badge {% if application.status == 'PENDING' %}bg-warning text-dark{% elif application.status == 'APPROVED' %}bg-success{% else %}bg-danger{% endif %}">
+                    {{ application.get_status_display }}
+                </span>
+                Applied as <strong>{{ application.get_role_applied_display }}</strong>
+            </p>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="row">
+        <!-- Left Column - Application Details -->
+        <div class="col-lg-8">
+            <!-- Personal Information -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light border-bottom">
+                    <h5 class="mb-0"><i class="bi bi-person"></i> Personal Information</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Full Name</label>
+                            <p class="mb-0 fw-500">{{ application.full_name }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="text-muted small">Email</label>
+                            <p class="mb-0"><a href="mailto:{{ application.email }}">{{ application.email }}</a></p>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Phone</label>
+                            <p class="mb-0"><a href="tel:{{ application.phone }}">{{ application.phone }}</a></p>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="text-muted small">Applied On</label>
+                            <p class="mb-0">{{ application.applied_at|date:"M d, Y H:i" }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Aadhaar Information -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light border-bottom">
+                    <h5 class="mb-0"><i class="bi bi-card-text"></i> Identity Verification</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Aadhaar Number</label>
+                            <p class="mb-0 font-monospace">{{ application.aadhaar_number }}</p>
+                        </div>
+                    </div>
+                    {% if application.aadhaar_document %}
+                    <div class="row">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Aadhaar Document</label>
+                            <div>
+                                <a href="{{ application.aadhaar_document.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-download"></i> View Document
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Vendor Specific Information -->
+            {% if application.role_applied == 'VENDOR' %}
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light border-bottom">
+                    <h5 class="mb-0"><i class="bi bi-shop"></i> Vendor Information</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Outlet Name</label>
+                            <p class="mb-0 fw-500">{{ application.outlet_name }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="text-muted small">Location</label>
+                            <p class="mb-0">{{ outlet_location_display }}</p>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Cuisine Type</label>
+                            <p class="mb-0">{{ cuisine_type_display }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="text-muted small">Operating Hours</label>
+                            <p class="mb-0">{{ application.operating_hours }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FSSAI & Banking Information -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light border-bottom">
+                    <h5 class="mb-0"><i class="bi bi-file-earmark-check"></i> Regulatory & Banking</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="text-muted small">FSSAI License Number</label>
+                            <p class="mb-0 font-monospace">{{ application.fssai_license }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="text-muted small">FSSAI Document</label>
+                            <div>
+                                {% if application.fssai_document %}
+                                <a href="{{ application.fssai_document.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-download"></i> View
+                                </a>
+                                {% else %}
+                                <p class="text-muted small">Not provided</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="text-muted small">GST Number</label>
+                            <p class="mb-0 font-monospace">{{ application.gst_number|default:"N/A" }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="text-muted small">NOC Document</label>
+                            <div>
+                                {% if application.college_noc %}
+                                <a href="{{ application.college_noc.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-download"></i> View
+                                </a>
+                                {% else %}
+                                <p class="text-muted small">Not provided</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Bank Account</label>
+                            <p class="mb-0 font-monospace">{{ application.bank_account }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="text-muted small">IFSC Code</label>
+                            <p class="mb-0 font-monospace">{{ application.ifsc_code }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Delivery Specific Information -->
+            {% if application.role_applied == 'DELIVERY' %}
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light border-bottom">
+                    <h5 class="mb-0"><i class="bi bi-truck"></i> Delivery Information</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Vehicle Type</label>
+                            <p class="mb-0">{{ application.vehicle_type }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="text-muted small">Vehicle Number</label>
+                            <p class="mb-0 font-monospace">{{ application.vehicle_number }}</p>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Driving License</label>
+                            <p class="mb-0 font-monospace">{{ application.driving_license }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="text-muted small">Driving License Document</label>
+                            <div>
+                                {% if application.driving_license_document %}
+                                <a href="{{ application.driving_license_document.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-download"></i> View
+                                </a>
+                                {% else %}
+                                <p class="text-muted small">Not provided</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <label class="text-muted small">Emergency Contact</label>
+                            <p class="mb-0">{{ application.emergency_contact }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Admin Notes -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light border-bottom">
+                    <h5 class="mb-0"><i class="bi bi-chat-left-text"></i> Review History</h5>
+                </div>
+                <div class="card-body">
+                    {% if application.reviewed_at %}
+                    <div class="mb-3">
+                        <label class="text-muted small">Reviewed On</label>
+                        <p class="mb-0">{{ application.reviewed_at|date:"M d, Y H:i" }}</p>
+                    </div>
+                    {% endif %}
+                    {% if application.admin_notes %}
+                    <div>
+                        <label class="text-muted small">Admin Notes</label>
+                        <p class="mb-0 border p-3 bg-light rounded">{{ application.admin_notes }}</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column - Actions -->
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm sticky-top" style="top: 20px;">
+                <div class="card-header bg-light border-bottom">
+                    <h5 class="mb-0"><i class="bi bi-check-circle"></i> Application Actions</h5>
+                </div>
+                <div class="card-body">
+                    {% if application.status == 'PENDING' %}
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label for="admin_notes" class="form-label">Admin Notes (Optional)</label>
+                            <textarea class="form-control" id="admin_notes" name="admin_notes" rows="4" placeholder="Add any notes about this application..."></textarea>
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" name="action" value="approve" class="btn btn-success btn-lg">
+                                <i class="bi bi-check-circle"></i> Approve Application
+                            </button>
+                            <button type="submit" name="action" value="reject" class="btn btn-danger btn-lg" onclick="return confirm('Are you sure you want to reject this application?');">
+                                <i class="bi bi-x-circle"></i> Reject Application
+                            </button>
+                        </div>
+                    </form>
+                    {% else %}
+                    <div class="alert {% if application.status == 'APPROVED' %}alert-success{% else %}alert-danger{% endif %} mb-3">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Status:</strong> {{ application.get_status_display }}<br>
+                        {% if application.reviewed_at %}
+                        <small>Reviewed on {{ application.reviewed_at|date:"M d, Y" }}</small>
+                        {% endif %}
+                    </div>
+
+                    {% if application.status == 'APPROVED' %}
+                    <div class="alert alert-info">
+                        <p class="mb-0 small">
+                            <i class="bi bi-info-circle"></i>
+                            This application has been approved. A user account has been created and login credentials have been sent to the applicant.
+                        </p>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-warning">
+                        <p class="mb-0 small">
+                            <i class="bi bi-info-circle"></i>
+                            This application has been rejected. An email notification has been sent to the applicant.
+                        </p>
+                    </div>
+                    {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .fw-500 {
+        font-weight: 500;
+    }
+    .font-monospace {
+        font-family: 'Courier New', monospace;
+        background-color: #f8f9fa;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+    }
+</style>
+{% endblock %}

@@ -124,6 +124,7 @@ def _get_account_deletion_blocker(user):
     if user.role == User.Role.STUDENT:
         has_active_orders = Order.objects.filter(student=user).exclude(
             Q(payment_status=Order.PaymentStatus.FAILED)
+            | Q(payment_status=Order.PaymentStatus.REFUNDED)
             | Q(vendor_decision=Order.VendorDecision.REJECTED)
             | Q(vendor_status=Order.VendorStatus.CANCELLED)
             | Q(delivery_status=Order.DeliveryStatus.DELIVERED)
@@ -984,6 +985,168 @@ def _mark_order_payment_completed(order: Order):
         order.save(update_fields=['payment_status', 'updated_at'])
 
 
+def _refund_completed_razorpay_payment(order: Order, reason: str):
+    """
+    Issue a full refund for a paid Razorpay order and persist refund metadata.
+    Supports both initial rejection and post-acceptance rejection scenarios.
+    """
+    if order.payment_method != Order.PaymentMethod.RAZORPAY:
+        return None
+
+    payment = Payment.objects.select_for_update().filter(order=order).first()
+    if not payment:
+        raise ValueError('Payment record not found for this order.')
+
+    # If already refunded, return the existing refund record
+    if payment.status == Payment.PaymentStatus.REFUNDED:
+        return payment
+
+    # Only refund if payment was successfully completed
+    if order.payment_status != Order.PaymentStatus.COMPLETED or payment.status != Payment.PaymentStatus.SUCCESS:
+        return None  # No refund needed if payment wasn't captured
+
+    if not payment.razorpay_payment_id:
+        raise ValueError('Missing captured Razorpay payment id for refund.')
+
+    try:
+        razorpay_client = razorpay.Client(
+            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+        )
+        refund_payload = {
+            'amount': int(payment.amount * 100),
+            'speed': 'optimized',  # Faster refund processing
+            'receipt': f'{order.order_code}-refund',
+            'notes': {
+                'order_code': order.order_code,
+                'reason': reason[:120],
+                'refunded_at': timezone.now().isoformat(),
+            },
+        }
+        refund = razorpay_client.payment.refund(payment.razorpay_payment_id, refund_payload)
+
+        payment.status = Payment.PaymentStatus.REFUNDED
+        payment.razorpay_refund_id = refund.get('id', '')
+        payment.refund_reason = reason[:255]
+        payment.refunded_at = timezone.now()
+        payment.save(update_fields=[
+            'status',
+            'razorpay_refund_id',
+            'refund_reason',
+            'refunded_at',
+            'updated_at',
+        ])
+
+        order.payment_status = Order.PaymentStatus.REFUNDED
+        order.save(update_fields=['payment_status', 'updated_at'])
+        
+        return payment
+    except Exception as exc:
+        raise ValueError(f'Razorpay refund failed: {str(exc)}')
+
+
+def _cancel_order_with_optional_refund(order: Order, *, reason: str, notify_driver: bool = False):
+    """
+    Cancel an order and refund it when Razorpay payment has already been captured.
+    Supports both initial rejection (PENDING) and post-acceptance rejection (ACCEPTED).
+    
+    Args:
+        order: The order to cancel
+        reason: Detailed reason for cancellation (for student notification)
+        notify_driver: Whether to notify the delivery driver if assigned
+    
+    Returns:
+        Refunded Payment object if Razorpay refund was successful, None otherwise
+    """
+    if order.delivery_status == Order.DeliveryStatus.DELIVERED:
+        raise ValueError('Delivered orders cannot be cancelled.')
+
+    # Check if delivery is already in progress (beyond ACCEPTED state)
+    assignment = DeliveryAssignment.objects.select_for_update().filter(order=order).first()
+    if assignment and assignment.status in [
+        DeliveryAssignment.AssignmentStatus.PICKED_UP,
+        DeliveryAssignment.AssignmentStatus.OUT_FOR_DELIVERY,
+        DeliveryAssignment.AssignmentStatus.DELIVERED,
+    ]:
+        raise ValueError('This order can no longer be rejected because the delivery partner has already picked it up.')
+
+    refunded_payment = None
+    
+    # Attempt refund if Razorpay payment was already captured
+    if order.payment_method == Order.PaymentMethod.RAZORPAY:
+        if order.payment_status == Order.PaymentStatus.COMPLETED:
+            try:
+                refunded_payment = _refund_completed_razorpay_payment(
+                    order, 
+                    reason=f'Order Rejected - {reason}'
+                )
+            except ValueError as exc:
+                # Log refund error but continue with order cancellation
+                messages_context = getattr(_cancel_order_with_optional_refund, '_messages', [])
+                messages_context.append(f'Refund error: {str(exc)}')
+        elif order.payment_status == Order.PaymentStatus.PENDING:
+            order.payment_status = Order.PaymentStatus.FAILED
+
+    # Update order status
+    order.vendor_decision = Order.VendorDecision.REJECTED
+    order.vendor_status = Order.VendorStatus.CANCELLED
+    order.delivery_status = Order.DeliveryStatus.NOT_STARTED
+    order.save(update_fields=[
+        'vendor_decision',
+        'vendor_status',
+        'delivery_status',
+        'payment_status',
+        'updated_at',
+    ])
+    
+    # Restore order item stock
+    _restore_order_item_stock(order)
+
+    # Cancel broadcast if in progress
+    broadcast = DeliveryBroadcast.objects.select_for_update().filter(order=order).first()
+    if broadcast and broadcast.status != DeliveryBroadcast.BroadcastStatus.REJECTED:
+        broadcast.status = DeliveryBroadcast.BroadcastStatus.REJECTED
+        broadcast.save(update_fields=['status'])
+        DeliveryBroadcastResponse.objects.filter(
+            broadcast=broadcast,
+            status=DeliveryBroadcastResponse.ResponseStatus.PENDING,
+        ).update(
+            status=DeliveryBroadcastResponse.ResponseStatus.CANCELLED,
+            responded_at=timezone.now(),
+            response_reason='Order was cancelled before assignment could continue.',
+        )
+
+    # Cancel assignment if exists but not delivered
+    if assignment and assignment.status != DeliveryAssignment.AssignmentStatus.CANCELLED:
+        assignment.status = DeliveryAssignment.AssignmentStatus.CANCELLED
+        assignment.save(update_fields=['status'])
+        if notify_driver and assignment.delivery_partner:
+            _notify_user(
+                assignment.delivery_partner,
+                order,
+                f'Order {order.order_code} was cancelled by the vendor. Do not proceed with this delivery.',
+                email_subject='Order Cancellation Notice',
+            )
+
+    # Build student notification message with refund status
+    refund_note = ''
+    if refunded_payment:
+        refund_note = ' A full refund has been processed to your original payment method and should appear within 2-5 business days.'
+    elif order.payment_method == Order.PaymentMethod.COD:
+        refund_note = ' Since this was a cash-on-delivery order, no online payment was captured.'
+    elif order.payment_method == Order.PaymentMethod.RAZORPAY and order.payment_status == Order.PaymentStatus.PENDING:
+        refund_note = ' Your payment was not yet captured, so no refund is needed.'
+
+    # Notify student of cancellation
+    _notify_user(
+        order.student,
+        order,
+        f'Your order {order.order_code} has been cancelled. {reason}.{refund_note}'.strip(),
+        email_subject='Order Cancelled',
+    )
+    
+    return refunded_payment
+
+
 @login_required
 def vendor_ticket_accept(request, order_id: int):
     if request.user.role != User.Role.VENDOR:
@@ -1010,6 +1173,12 @@ def vendor_ticket_accept(request, order_id: int):
 
 @login_required
 def vendor_ticket_reject(request, order_id: int):
+    """
+    Vendor rejects an order. Works for both:
+    - PENDING orders (pre-acceptance rejection)
+    - ACCEPTED orders (post-acceptance rejection)
+    Handles automatic Razorpay refunds if payment was captured.
+    """
     if request.user.role != User.Role.VENDOR:
         messages.error(request, 'Unauthorized access')
         return redirect('login')
@@ -1017,19 +1186,58 @@ def vendor_ticket_reject(request, order_id: int):
     vendor_profile, _ = VendorProfile.objects.get_or_create(user=request.user)
     order = get_object_or_404(Order, pk=order_id, vendor=vendor_profile)
 
-    if order.vendor_decision != Order.VendorDecision.PENDING:
-        messages.error(request, 'This ticket has already been decided.')
+    # Check if already rejected
+    if order.vendor_decision == Order.VendorDecision.REJECTED:
+        messages.info(request, 'This ticket has already been rejected.')
+        return redirect('vendor_dashboard')
+    
+    # Check if already delivered
+    if order.delivery_status == Order.DeliveryStatus.DELIVERED:
+        messages.error(request, 'Delivered orders cannot be rejected.')
         return redirect('vendor_dashboard')
 
-    order.vendor_decision = Order.VendorDecision.REJECTED
-    order.vendor_status = Order.VendorStatus.CANCELLED
-    order.save()
-    _restore_order_item_stock(order)
+    # Determine if this is post-acceptance rejection
+    is_post_acceptance = order.vendor_decision == Order.VendorDecision.ACCEPTED
+    
+    try:
+        with transaction.atomic():
+            locked_order = Order.objects.select_for_update().get(pk=order.pk)
+            
+            # Construct detailed rejection reason
+            if is_post_acceptance:
+                rejection_reason = 'The vendor was unable to complete this order after accepting it'
+            else:
+                rejection_reason = 'The vendor rejected this order'
+            
+            refunded_payment = _cancel_order_with_optional_refund(
+                locked_order,
+                reason=rejection_reason,
+                notify_driver=True,
+            )
+    except ValueError as exc:
+        messages.error(request, f'Cannot reject order: {str(exc)}')
+        return redirect('vendor_dashboard')
+    except Exception as exc:
+        messages.error(request, f'Error rejecting order: {str(exc)}')
+        return redirect('vendor_dashboard')
 
-    message = f"Your order {order.order_code or order.id} has been rejected by the vendor."
-    _notify_user(order.student, order, message, email_subject='Order Rejected')
-
-    messages.success(request, 'Ticket rejected. Student has been notified.')
+    # Provide clear feedback about refund status
+    if order.payment_method == Order.PaymentMethod.RAZORPAY:
+        if order.payment_status == Order.PaymentStatus.REFUNDED:
+            if is_post_acceptance:
+                messages.success(request, 'Order rejected (post-acceptance). ✓ Full Razorpay refund has been processed to the student.')
+            else:
+                messages.success(request, 'Order rejected. ✓ Full Razorpay refund has been processed to the student.')
+        elif order.payment_status == Order.PaymentStatus.PENDING:
+            messages.success(request, 'Order rejected. Student payment was not yet captured.')
+        else:
+            messages.success(request, 'Order rejected successfully.')
+    else:
+        if is_post_acceptance:
+            messages.success(request, 'Order rejected (post-acceptance). This was a cash-on-delivery order.')
+        else:
+            messages.success(request, 'Order rejected successfully.')
+    
     return redirect('vendor_dashboard')
 
 
@@ -1584,14 +1792,15 @@ def student_create_order(request):
             orders.append(order)
 
         if razorpay_order:
-            Payment.objects.create(
-                order=orders[0],
-                student=request.user,
-                razorpay_order_id=razorpay_order['id'],
-                amount=total_amount,
-                currency='INR',
-                status=Payment.PaymentStatus.PENDING,
-            )
+            for order in orders:
+                Payment.objects.create(
+                    order=order,
+                    student=request.user,
+                    razorpay_order_id=razorpay_order['id'],
+                    amount=order.total_amount,
+                    currency='INR',
+                    status=Payment.PaymentStatus.PENDING,
+                )
 
     if payment_method == Order.PaymentMethod.COD:
         cart.items.all().delete()
@@ -1652,11 +1861,23 @@ def student_verify_payment(request):
     
     # Update payment record
     try:
-        payment = Payment.objects.get(razorpay_order_id=razorpay_order_id)
-        payment.razorpay_payment_id = razorpay_payment_id
-        payment.razorpay_signature = razorpay_signature
-        payment.status = Payment.PaymentStatus.SUCCESS
-        payment.save()
+        payments = list(Payment.objects.filter(
+            student=request.user,
+            razorpay_order_id=razorpay_order_id,
+        ))
+        if not payments:
+            raise Payment.DoesNotExist
+
+        for payment in payments:
+            payment.razorpay_payment_id = razorpay_payment_id
+            payment.razorpay_signature = razorpay_signature
+            payment.status = Payment.PaymentStatus.SUCCESS
+            payment.save(update_fields=[
+                'razorpay_payment_id',
+                'razorpay_signature',
+                'status',
+                'updated_at',
+            ])
         
         # Update all orders for this payment
         related_orders = Order.objects.filter(
@@ -1773,7 +1994,7 @@ def student_order_detail(request, order_id: int):
     delivery_assignment = order.delivery_assignment if hasattr(order, 'delivery_assignment') else None
     tracking_updates = list(order.tracking_updates.all()[:100])
     order_is_cancelled = (
-        order.payment_status == Order.PaymentStatus.FAILED
+        order.payment_status in [Order.PaymentStatus.FAILED, Order.PaymentStatus.REFUNDED]
         or order.vendor_decision == Order.VendorDecision.REJECTED
         or order.vendor_status == Order.VendorStatus.CANCELLED
     )
@@ -2218,6 +2439,69 @@ def delivery_reject_broadcast(request, broadcast_id: int):
 
 
 @login_required
+@require_http_methods(["POST"])
+def delivery_reject_assignment(request, assignment_id: int):
+    """
+    Delivery partner rejects an already accepted assignment (post-acceptance rejection).
+    Can only reject before picking up the order.
+    Automatically processes Razorpay refunds if payment was captured.
+    """
+    if request.user.role != User.Role.DELIVERY:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+
+    reason_input = (request.POST.get('reason') or '').strip()
+    reason = reason_input or 'Delivery partner was unable to complete this delivery'
+
+    try:
+        with transaction.atomic():
+            assignment = DeliveryAssignment.objects.select_for_update().select_related(
+                'order', 'order__student', 'order__vendor'
+            ).get(id=assignment_id, delivery_partner=request.user)
+
+            # Only allow rejection before pickup
+            if assignment.status != DeliveryAssignment.AssignmentStatus.ACCEPTED:
+                return JsonResponse({
+                    'error': f'Cannot reject - delivery is already {assignment.get_status_display()}. You can only cancel before pickup.'
+                }, status=400)
+
+            order = Order.objects.select_for_update().get(id=assignment.order_id)
+            
+            # Cancel order with optional refund
+            refunded_payment = _cancel_order_with_optional_refund(
+                order,
+                reason=f'Delivery Partner Cancelled - {reason}',
+                notify_driver=False,
+            )
+
+            # Notify vendor
+            _notify_user(
+                order.vendor.user,
+                order,
+                f'Delivery partner {request.user.username} rejected order {order.order_code}. Reason: {reason}. The order has been cancelled and the student has been notified.',
+                email_subject='Delivery Rejected - Order Cancelled',
+            )
+            
+            # Determine success message based on refund status
+            message = 'Delivery rejected. Order has been cancelled.'
+            if order.payment_method == Order.PaymentMethod.RAZORPAY:
+                if order.payment_status == Order.PaymentStatus.REFUNDED:
+                    message += ' ✓ Full refund has been processed to the student.'
+                elif order.payment_status == Order.PaymentStatus.PENDING:
+                    message += ' No payment was captured.'
+
+        return JsonResponse({
+            'success': True,
+            'message': message,
+        })
+    except DeliveryAssignment.DoesNotExist:
+        return JsonResponse({'error': 'Assignment not found'}, status=404)
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+    except Exception as exc:
+        return JsonResponse({'error': f'Error rejecting assignment: {str(exc)}'}, status=500)
+
+
+@login_required
 def delivery_navigation(request, assignment_id: int):
     """
     Show navigation for the current delivery leg.
@@ -2442,4 +2726,91 @@ def delivery_send_location(request, assignment_id: int):
         'success': True,
         'message': 'Location updated',
         'tracking_id': tracking.id,
+    })
+
+
+# ─── Admin Application Management ─────────────────────────────────────────────
+@login_required
+def admin_applications_list(request):
+    """
+    Display list of vendor/delivery applications for admin review.
+    """
+    if not request.user.is_staff:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    # Get filter parameters
+    role_filter = request.GET.get('role', '')
+    status_filter = request.GET.get('status', '')
+    search_query = request.GET.get('search', '').strip()
+    
+    # Start with all applications
+    applications = StaffApplication.objects.all().order_by('-applied_at')
+    
+    # Apply filters
+    if role_filter in StaffApplication.Role.values:
+        applications = applications.filter(role_applied=role_filter)
+    
+    if status_filter in StaffApplication.Status.values:
+        applications = applications.filter(status=status_filter)
+    
+    if search_query:
+        applications = applications.filter(
+            Q(full_name__icontains=search_query) |
+            Q(email__icontains=search_query) |
+            Q(phone__icontains=search_query)
+        )
+    
+    # Pagination
+    from django.core.paginator import Paginator
+    paginator = Paginator(applications, 10)
+    page_number = request.GET.get('page', 1)
+    page_obj = paginator.get_page(page_number)
+    
+    return render(request, 'admin/applications_list.html', {
+        'page_obj': page_obj,
+        'applications': page_obj.object_list,
+        'role_filter': role_filter,
+        'status_filter': status_filter,
+        'search_query': search_query,
+        'role_choices': StaffApplication.Role.choices,
+        'status_choices': StaffApplication.Status.choices,
+    })
+
+
+@login_required
+def admin_application_detail(request, application_id: int):
+    """
+    Display detailed view of a vendor/delivery application.
+    """
+    if not request.user.is_staff:
+        messages.error(request, 'Unauthorized access')
+        return redirect('login')
+    
+    application = get_object_or_404(StaffApplication, pk=application_id)
+    
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        notes = request.POST.get('admin_notes', '').strip()
+        
+        if action == 'approve':
+            application.status = StaffApplication.Status.APPROVED
+            application.reviewed_at = timezone.now()
+            application.admin_notes = notes
+            application.save()
+            messages.success(request, f'Application from {application.full_name} approved successfully.')
+            return redirect('admin_applications_list')
+        
+        elif action == 'reject':
+            application.status = StaffApplication.Status.REJECTED
+            application.reviewed_at = timezone.now()
+            application.admin_notes = notes
+            application.save()
+            messages.success(request, f'Application from {application.full_name} rejected.')
+            return redirect('admin_applications_list')
+    
+    return render(request, 'admin/application_detail.html', {
+        'application': application,
+        'outlet_location_display': dict(OUTLET_LOCATION_OPTIONS).get(application.outlet_location, ''),
+        'cuisine_type_display': dict(CUISINE_TYPE_OPTIONS).get(application.cuisine_type, ''),
     })
