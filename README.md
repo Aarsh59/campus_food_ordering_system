@@ -3,6 +3,7 @@
 A comprehensive web-based food ordering platform designed for IIT Kanpur campus. This system enables students to order food from campus vendors, vendors to manage their outlets and orders, and a delivery system to ensure timely delivery of meals.
 
 **Course Project:** CS253 (Software Development)
+**Professor:** [Indranil Saha](https://cse.iitk.ac.in/users/isaha/)
 
 ## Table of Contents
 
@@ -20,7 +21,7 @@ A comprehensive web-based food ordering platform designed for IIT Kanpur campus.
 
 ## Features
 
-### 🎓 Student Features
+### Student Features :
 - **User Registration & Authentication** - OTP-based email verification for students
 - **Vendor Browsing** - Browse available food vendors and their menus
 - **Smart Shopping Cart** - Add/remove items from multi-vendor cart
@@ -30,7 +31,7 @@ A comprehensive web-based food ordering platform designed for IIT Kanpur campus.
 - **Order History** - View past orders and quick reorder functionality
 - **Notifications** - Email and SMS alerts for order status updates
 
-### 🏪 Vendor Features
+### Vendor Features :
 - **Vendor Application** - Vendors apply with outlet details, FSSAI, GST, banking info
 - **Admin Approval System** - Admins review and approve vendor applications
 - **Outlet Management** - Update outlet name, location on interactive map
@@ -39,14 +40,14 @@ A comprehensive web-based food ordering platform designed for IIT Kanpur campus.
 - **Delivery Broadcasting** - Broadcast orders to available delivery partners
 - **Real-time Updates** - Live order status updates
 
-### 🚚 Delivery Partner Features
+### Delivery Partner Features :
 - **Delivery Application** - Apply with vehicle and license information
 - **Available Orders Dashboard** - Browse active delivery broadcasts
 - **Assignment Management** - Accept/reject delivery assignments
 - **Real-time Tracking** - Send live location updates to students
 - **Delivery Workflow** - Mark orders as picked up, out for delivery, delivered
 
-### 👨‍💼 Admin Features
+### Admin Features :
 - **Application Review Dashboard** - Beautiful interface to review vendor/delivery applications
 - **Application Filtering** - Filter by role, status, and search by name/email/phone
 - **Detailed Application Review** - View complete application with all documents
