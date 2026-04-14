@@ -147,6 +147,8 @@ let map;
 let markers = {};
 let polyline;
 let trackingRefreshTimer;
+let takeoutDirectionsRenderer;
+let takeoutLocationWatch;
 const studentLocation = {{ student_location_json|default:"null"|safe }};
 const vendorLocation = {{ vendor_location_json|default:"null"|safe }};
 const isTakeout = {% if order.fulfillment_type == 'TAKEOUT' %}true{% else %}false{% endif %};
@@ -272,60 +274,142 @@ function initializeTakeoutRoute(destination) {
     const routeStatus = document.getElementById('takeout-route-status');
     const routeLink = document.getElementById('takeout-google-maps-link');
 
-    if (routeLink && destination) {
-        routeLink.href = `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}&travelmode=walking`;
-    }
-
     if (!navigator.geolocation) {
+        if (routeLink && destination) {
+            routeLink.href = `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}&travelmode=walking`;
+        }
         if (routeStatus) {
             routeStatus.textContent = 'Live route guidance is unavailable in this browser. You can still open Google Maps.';
         }
         return;
     }
 
-    navigator.geolocation.getCurrentPosition((position) => {
-        const origin = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-        };
+    function updateRouteLink(origin) {
+        if (!routeLink || !destination) {
+            return;
+        }
 
+        const params = new URLSearchParams({
+            api: '1',
+            destination: `${destination.lat},${destination.lng}`,
+            travelmode: 'walking',
+        });
+
+        if (origin && typeof origin.lat === 'number' && typeof origin.lng === 'number') {
+            params.set('origin', `${origin.lat},${origin.lng}`);
+        }
+
+        routeLink.href = `https://www.google.com/maps/dir/?${params.toString()}`;
+    }
+
+    function renderRoute(origin, accuracy) {
+        const normalizedOrigin = {
+            lat: origin.lat,
+            lng: origin.lng,
+        };
+        updateCurrentMarker(normalizedOrigin);
+        updateRouteLink(normalizedOrigin);
+
+        const directionsService = new google.maps.DirectionsService();
+        if (takeoutDirectionsRenderer) {
+            takeoutDirectionsRenderer.setMap(null);
+        }
+        takeoutDirectionsRenderer = new google.maps.DirectionsRenderer({
+            map: map,
+            suppressMarkers: true,
+            preserveViewport: false,
+        });
+
+        directionsService.route({
+            origin: normalizedOrigin,
+            destination: destination,
+            travelMode: google.maps.TravelMode.WALKING,
+        }, (result, status) => {
+            if (status === google.maps.DirectionsStatus.OK) {
+                takeoutDirectionsRenderer.setDirections(result);
+                const leg = result.routes[0] && result.routes[0].legs[0];
+                if (routeStatus && leg) {
+                    const accuracyText = typeof accuracy === 'number'
+                        ? ` GPS accuracy about ${Math.round(accuracy)} m.`
+                        : '';
+                    routeStatus.textContent = `Route ready: about ${leg.distance.text}, ${leg.duration.text} on foot.${accuracyText}`;
+                }
+            } else if (routeStatus) {
+                routeStatus.textContent = 'Could not build a walking route automatically. Open Google Maps below.';
+            }
+        });
+    }
+
+    function updateCurrentMarker(origin) {
+        if (markers.student) {
+            markers.student.setPosition(origin);
+            return;
+        }
         markers.student = new google.maps.Marker({
             position: origin,
             map: map,
             title: 'Your Current Location',
             icon: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png'
         });
+    }
 
-        const directionsService = new google.maps.DirectionsService();
-        const directionsRenderer = new google.maps.DirectionsRenderer({
-            map: map,
-            suppressMarkers: true,
-        });
-
-        directionsService.route({
-            origin: origin,
-            destination: destination,
-            travelMode: google.maps.TravelMode.WALKING,
-        }, (result, status) => {
-            if (status === google.maps.DirectionsStatus.OK) {
-                directionsRenderer.setDirections(result);
-                const leg = result.routes[0] && result.routes[0].legs[0];
-                if (routeStatus && leg) {
-                    routeStatus.textContent = `Route ready: about ${leg.distance.text}, ${leg.duration.text} on foot.`;
-                }
-            } else if (routeStatus) {
-                routeStatus.textContent = 'Could not build a walking route automatically. Open Google Maps below.';
-            }
-        });
-    }, () => {
-        if (routeStatus) {
-            routeStatus.textContent = 'Allow location access to see a live route from your current location.';
+    function startLocationWatch() {
+        if (takeoutLocationWatch) {
+            navigator.geolocation.clearWatch(takeoutLocationWatch);
         }
-    }, {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 60000,
-    });
+
+        takeoutLocationWatch = navigator.geolocation.watchPosition((position) => {
+            const origin = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+            };
+            updateCurrentMarker(origin);
+            renderRoute(origin, position.coords.accuracy);
+        }, () => {}, {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 0,
+        });
+    }
+
+    function requestCurrentLocation(primaryOptions, fallbackOptions) {
+        navigator.geolocation.getCurrentPosition((position) => {
+            const origin = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+            };
+            updateCurrentMarker(origin);
+            renderRoute(origin, position.coords.accuracy);
+            startLocationWatch();
+        }, () => {
+            if (fallbackOptions) {
+                if (routeStatus) {
+                    routeStatus.textContent = 'Retrying with approximate location...';
+                }
+                requestCurrentLocation(fallbackOptions, null);
+                return;
+            }
+
+            updateRouteLink(null);
+            if (routeStatus) {
+                routeStatus.textContent = 'Allow location access to see a live route from your current location.';
+            }
+        }, primaryOptions);
+    }
+
+    updateRouteLink(null);
+    requestCurrentLocation(
+        {
+            enableHighAccuracy: true,
+            timeout: 12000,
+            maximumAge: 0,
+        },
+        {
+            enableHighAccuracy: false,
+            timeout: 20000,
+            maximumAge: 60000,
+        }
+    );
 }
 
 // Initialize map when page loads
