@@ -3,6 +3,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib.auth import views as auth_views
+from users.forms import PasswordResetWithSMSForm
 from users.views import home_view
 
 urlpatterns = [
@@ -13,6 +14,7 @@ urlpatterns = [
     # password reset
     path('password-reset/',
          auth_views.PasswordResetView.as_view(
+             form_class=PasswordResetWithSMSForm,
              template_name='users/password_reset.html',
              success_url='/password-reset/done/'
          ), name='password_reset'),

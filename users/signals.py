@@ -1,12 +1,13 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 import logging
-import os
 import random
 import string
 from .models import Notification, StaffApplication, User, VendorProfile
 from .username_validation import sanitize_username_seed
 from .email_utils import send_app_email
+from .link_utils import build_login_url, build_password_reset_url
+from .sms_utils import send_app_sms
 
 logger = logging.getLogger(__name__)
 
@@ -14,37 +15,6 @@ logger = logging.getLogger(__name__)
 def generate_password(length=10):
     characters = string.ascii_letters + string.digits + '!@#$%'
     return ''.join(random.choices(characters, k=length))
-
-
-def _build_login_url() -> str:
-    base_url = (
-        os.getenv('APP_URL')
-        or os.getenv('PUBLIC_URL')
-        or os.getenv('RENDER_EXTERNAL_URL')
-        or _railway_public_url()
-        or 'http://localhost:8000'
-    ).rstrip('/')
-    return f'{base_url}/login/'
-
-
-def _build_password_reset_url() -> str:
-    base_url = (
-        os.getenv('APP_URL')
-        or os.getenv('PUBLIC_URL')
-        or os.getenv('RENDER_EXTERNAL_URL')
-        or _railway_public_url()
-        or 'http://localhost:8000'
-    ).rstrip('/')
-    return f'{base_url}/password-reset/'
-
-
-def _railway_public_url() -> str:
-    domain = (os.getenv('RAILWAY_PUBLIC_DOMAIN') or '').strip()
-    if not domain:
-        return ''
-    if '://' in domain:
-        return domain
-    return f'https://{domain}'
 
 
 def _build_unique_username(email: str) -> str:
@@ -63,6 +33,14 @@ def _safe_send_email(subject, message, recipient_email):
     Returns whether the email was accepted by the backend.
     """
     return send_app_email(subject=subject, message=message, recipient_email=recipient_email)
+
+
+def _safe_send_sms(message, recipient_phone):
+    """
+    Best-effort SMS sender for approval/rejection signals.
+    Returns whether the SMS was accepted by the backend.
+    """
+    return send_app_sms(message=message, recipient_phone=recipient_phone)
 
 
 def _create_admin_application_notifications(application):
@@ -115,6 +93,10 @@ Please review it in the Django admin Staff Applications page.
             message=message,
             recipient_email=admin_user.email,
         )
+        _safe_send_sms(
+            message=message,
+            recipient_phone=admin_user.phone,
+        )
 
 
 @receiver(post_save, sender=StaffApplication)
@@ -128,8 +110,8 @@ def handle_application_approval(sender, instance, created, **kwargs):
     # ── Approved ──────────────────────────────────────────────────────────────
     if instance.status == StaffApplication.Status.APPROVED:
         existing_user = User.objects.filter(email=instance.email).first()
-        login_url = _build_login_url()
-        reset_url = _build_password_reset_url()
+        login_url = build_login_url()
+        reset_url = build_password_reset_url()
 
         if existing_user:
             _safe_send_email(
@@ -150,6 +132,14 @@ If you do not know your password, reset it here:
 Regards,
 Campus Food Team''',
                 recipient_email=instance.email,
+            )
+            _safe_send_sms(
+                message=(
+                    f'Campus Food: your application has been approved. '
+                    f'Username: {existing_user.username}. '
+                    'Use the login page or your active session to continue.'
+                ),
+                recipient_phone=instance.phone,
             )
             logger.info('Approval email re-sent for existing user %s', existing_user.username)
             return
@@ -198,6 +188,14 @@ Regards,
 Campus Food Team''',
             recipient_email=instance.email,
         )
+        _safe_send_sms(
+            message=(
+                f'Campus Food: your application has been approved. '
+                f'Username: {username}. Password: {password}. '
+                'Please change your password after first login.'
+            ),
+            recipient_phone=instance.phone,
+        )
 
         logger.info('Account created for %s (%s)', instance.full_name, instance.role_applied)
 
@@ -222,4 +220,12 @@ please contact the campus admin.
 Regards,
 Campus Food Team''',
             recipient_email=instance.email,
+        )
+        _safe_send_sms(
+            message=(
+                f'Campus Food: your {instance.get_role_applied_display()} application was not approved. '
+                f'Reason: {instance.admin_notes if instance.admin_notes else "Not specified"}. '
+                'Please contact the campus admin if you have questions.'
+            ),
+            recipient_phone=instance.phone,
         )

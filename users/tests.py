@@ -489,14 +489,18 @@ class PasswordManagementTest(TestCase):
         )
 
     def test_forgot_password_sends_reset_email(self):
-        response = self.client.post(reverse('password_reset'), {
-            'email': 'password-user@iitk.ac.in',
-        })
+        with patch('users.forms.send_app_sms') as mock_send_sms:
+            response = self.client.post(reverse('password_reset'), {
+                'email': 'password-user@iitk.ac.in',
+            })
 
         self.assertRedirects(response, reverse('password_reset_done'))
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn('Campus Food password reset', mail.outbox[0].subject)
         self.assertIn('/password-reset-confirm/', mail.outbox[0].body)
+        mock_send_sms.assert_called_once()
+        self.assertEqual(mock_send_sms.call_args.kwargs['recipient_phone'], self.user.phone)
+        self.assertIn('password reset email was sent', mock_send_sms.call_args.kwargs['message'].lower())
 
     def test_password_reset_confirm_updates_password(self):
         uid = urlsafe_base64_encode(force_bytes(self.user.pk))
@@ -539,6 +543,31 @@ class PasswordManagementTest(TestCase):
         self.assertContains(response, 'Your old password was entered incorrectly')
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password('Campus@1234'))
+
+
+class SMSUtilsTest(TestCase):
+
+    @override_settings(
+        SMS_ENABLED=True,
+        SMS_PROVIDER='TWILIO',
+        TWILIO_ACCOUNT_SID='AC123',
+        TWILIO_AUTH_TOKEN='secret',
+        TWILIO_PHONE_NUMBER='+15005550006',
+        PUBLIC_BASE_URL='https://campus-food.example',
+    )
+    @patch('users.sms_utils._send_twilio_sms')
+    def test_send_app_sms_appends_portal_link_for_twilio(self, mock_send_twilio_sms):
+        from .sms_utils import send_app_sms
+
+        mock_send_twilio_sms.return_value = True
+
+        sent = send_app_sms('Order accepted.', '9876543210')
+
+        self.assertTrue(sent)
+        mock_send_twilio_sms.assert_called_once()
+        self.assertEqual(mock_send_twilio_sms.call_args.kwargs['recipient_phone'], '+919876543210')
+        self.assertIn('Order accepted.', mock_send_twilio_sms.call_args.kwargs['message'])
+        self.assertIn('https://campus-food.example/', mock_send_twilio_sms.call_args.kwargs['message'])
 
 
 # ─── Staff Application Tests ──────────────────────────────────────────────────

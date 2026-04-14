@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from .email_utils import send_app_email
 from .models import ContactOTP
+from .sms_utils import send_app_sms_otp
 
 OTP_DIGITS = 6
 PHONE_RE = re.compile(r'^\d{10}$')
@@ -130,6 +131,13 @@ def send_email_otp(email: str, code: str) -> bool:
     )
 
 
-def send_otp(purpose: str, channel: str, target: str) -> bool:
+def send_sms_otp(phone: str, code: str) -> bool:
+    return send_app_sms_otp(code=code, recipient_phone=normalize_phone(phone))
+
+
+def send_otp(purpose: str, channel: str, target: str, *, backup_phone: str = '') -> bool:
     _, code = issue_otp(purpose, channel, target)
-    return send_email_otp(target, code)
+    email_sent = send_email_otp(target, code)
+    if backup_phone:
+        send_sms_otp(backup_phone, code)
+    return email_sent

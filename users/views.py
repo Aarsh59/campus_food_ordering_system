@@ -41,6 +41,7 @@ from .otp_utils import (
     send_otp,
     verify_otp,
 )
+from .sms_utils import send_app_sms
 
 import json
 import urllib.parse
@@ -426,7 +427,7 @@ def send_registration_otp(request):
     if purpose == ContactOTP.Purpose.STAFF_APPLICATION and StaffApplication.objects.filter(email=email).exists():
         return JsonResponse({'success': False, 'error': 'An application with this email already exists'}, status=400)
     try:
-        sent = send_otp(purpose, channel, email)
+        sent = send_otp(purpose, channel, email, backup_phone=phone)
     except OTPResendCooldownError as exc:
         return JsonResponse({
             'success': False,
@@ -945,6 +946,13 @@ def _safe_send_email(subject: str, message: str, recipient_email: str):
     return send_app_email(subject=subject, message=message, recipient_email=recipient_email)
 
 
+def _safe_send_sms(message: str, recipient_phone: str):
+    """
+    Best-effort SMS sender. Failures shouldn't break vendor workflows.
+    """
+    return send_app_sms(message=message, recipient_phone=recipient_phone)
+
+
 def _notify_user(recipient: User, order: Order, message: str, email_subject: str = ''):
     notification = Notification.objects.create(
         recipient=recipient,
@@ -956,6 +964,10 @@ def _notify_user(recipient: User, order: Order, message: str, email_subject: str
             subject=email_subject,
             message=message,
             recipient_email=recipient.email,
+        )
+        _safe_send_sms(
+            message=message,
+            recipient_phone=recipient.phone,
         )
     return notification
 
