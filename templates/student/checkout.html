@@ -517,15 +517,17 @@ function initiatePayment(data) {
         theme: {
             color: '#ff6b00'
         },
-        // Enable QR code and UPI payment methods
+        // Enable payment methods
         method: {
             upi: true,
-            wallet: false,
+            card: true,
+            wallet: true,
+            netbanking: true,
             emandate: false
         }
     };
     
-    // If user provided UPI ID, add it to prefill (Razorpay will send payment request)
+    // If user provided UPI VPA, prefill it (Razorpay will show "Send Payment Request" option)
     if (upiId && upiId.includes('@')) {
         options.prefill.vpa = upiId;
     }
