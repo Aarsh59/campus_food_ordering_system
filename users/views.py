@@ -1724,7 +1724,6 @@ def student_create_order(request):
                 'currency': 'INR',
                 'receipt': receipt_id,  # Required for QR code generation
                 'payment_capture': '1',
-                'timeout': 600,  # 10 minutes timeout for QR code
                 'notes': {
                     'user_id': request.user.id,
                     'student_email': request.user.email,
