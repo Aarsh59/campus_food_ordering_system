@@ -1,8 +1,10 @@
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib.auth import views as auth_views
+from django.views.static import serve
+from django.views.decorators.cache import cache_page
 from users.forms import PasswordResetWithSMSForm
 from users.views import home_view
 
@@ -35,5 +37,15 @@ urlpatterns = [
          auth_views.PasswordResetCompleteView.as_view(
              template_name='users/password_reset_complete.html'
          ), name='password_reset_complete'),
+]
 
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve media files in development
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    # In production, serve media files with proper path handling
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', cache_page(60*60*24)(serve), {
+            'document_root': settings.MEDIA_ROOT
+        }),
+    ]

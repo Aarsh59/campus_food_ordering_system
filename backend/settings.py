@@ -179,7 +179,7 @@ USE_TZ        = True
 # ─── Static Files ─────────────────────────────────────────────────────────────
 STATIC_URL  = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# Whitenoise serves both static and media files in productionSTATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # ─── Media Files (uploads) ────────────────────────────────────────────────────
 # Use Railway persistent volumes - no AWS needed
