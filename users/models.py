@@ -504,6 +504,9 @@ class Payment(models.Model):
     refund_reason = models.CharField(max_length=255, blank=True)
     refunded_at = models.DateTimeField(null=True, blank=True)
     
+    # UPI details (for payment request via UPI ID)
+    upi_id = models.CharField(max_length=50, blank=True, help_text='UPI ID used for payment request (e.g., user@oksbi)')
+    
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, default='INR')
     status = models.CharField(max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING)

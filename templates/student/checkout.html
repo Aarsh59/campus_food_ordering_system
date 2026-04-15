@@ -115,6 +115,7 @@ function syncCheckoutModeUi() {
     const paymentMethod = getSelectedPaymentMethod();
     const deliverySection = document.getElementById('delivery-address-card');
     const takeoutNotice = document.getElementById('takeout-notice');
+    const upiSection = document.getElementById('upi-options-section');
     const primaryButton = document.getElementById('checkout-submit-button');
     const termsList = document.getElementById('checkout-terms-list');
     const priceLabel = document.getElementById('checkout-fee-label');
@@ -124,6 +125,9 @@ function syncCheckoutModeUi() {
     }
     if (takeoutNotice) {
         takeoutNotice.classList.toggle('d-none', fulfillmentType !== 'TAKEOUT');
+    }
+    if (upiSection) {
+        upiSection.style.display = paymentMethod === 'RAZORPAY' ? 'block' : 'none';
     }
     if (priceLabel) {
         priceLabel.textContent = fulfillmentType === 'DELIVERY' ? 'Delivery Fee:' : 'Takeout Fee:';
@@ -140,7 +144,7 @@ function syncCheckoutModeUi() {
     if (termsList) {
         const paymentText = paymentMethod === 'COD'
             ? 'You will pay cash when the order is handed over'
-            : 'Payment will be processed through Razorpay';
+            : 'Payment will be processed through Razorpay (UPI/Card/Net Banking)';
         const fulfillmentText = fulfillmentType === 'TAKEOUT'
             ? 'You can collect the order by visiting the outlet'
             : 'A delivery partner will pick up your food';
@@ -441,6 +445,15 @@ function createOrder() {
     form.append('delivery_address', address);
     form.append('fulfillment_type', fulfillmentType);
     form.append('payment_method', paymentMethod);
+    
+    // Include UPI ID if user is using Razorpay
+    if (paymentMethod === 'RAZORPAY') {
+        const upiIdInput = document.getElementById('upi-id-input');
+        const upiId = upiIdInput ? upiIdInput.value.trim() : '';
+        if (upiId) {
+            form.append('upi_id', upiId);
+        }
+    }
 
     fetch('{% url "student_create_order" %}', {
         method: 'POST',
@@ -473,6 +486,10 @@ function createOrder() {
 
 function initiatePayment(data) {
     let paymentResolved = false;
+    
+    // Get UPI ID if user entered one
+    const upiIdInput = document.getElementById('upi-id-input');
+    const upiId = upiIdInput ? upiIdInput.value.trim() : '';
 
     const options = {
         key: '{{ razorpay_key }}',
@@ -499,8 +516,19 @@ function initiatePayment(data) {
         },
         theme: {
             color: '#ff6b00'
+        },
+        // Enable QR code and UPI payment methods
+        method: {
+            upi: true,
+            wallet: false,
+            emandate: false
         }
     };
+    
+    // If user provided UPI ID, add it to prefill (Razorpay will send payment request)
+    if (upiId && upiId.includes('@')) {
+        options.prefill.vpa = upiId;
+    }
 
     const rzp = new Razorpay(options);
     rzp.on('payment.failed', function(response) {
@@ -977,6 +1005,36 @@ document.addEventListener('DOMContentLoaded', bindCheckoutOptions);
                 <strong>Cash on Delivery</strong>
                 <p class="text-muted mb-0">Pay in cash when your order is delivered or when you collect it for takeout</p>
             </label>
+        </div>
+
+        <!-- UPI Payment Options -->
+        <div id="upi-options-section" class="mt-4 p-3 bg-light rounded" style="display: none;">
+            <h6 class="mb-3">📱 UPI Payment Options</h6>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="upi-id-input" class="form-label">
+                        <strong>Enter Your UPI ID</strong>
+                        <small class="text-muted d-block">(Optional - You'll receive a payment request)</small>
+                    </label>
+                    <input 
+                        type="text" 
+                        id="upi-id-input" 
+                        class="form-control" 
+                        placeholder="example@oksbi or example@paytm"
+                        value="aarsh.kaushik123@oksbi"
+                    >
+                    <small class="text-muted d-block mt-2">Format: yourname@bankname (e.g., aarsh.kaushik123@oksbi)</small>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">
+                        <strong>Or Scan QR Code</strong>
+                    </label>
+                    <p class="text-muted">You can also choose "QR Code" in the payment modal and scan with Google Pay or any UPI app.</p>
+                </div>
+            </div>
+            <div class="alert alert-info mb-0" style="font-size: 0.9rem;">
+                <strong>💡 Tip:</strong> Enter your UPI ID to receive a direct payment request on your UPI app, or leave it empty to scan the QR code instead.
+            </div>
         </div>
     </div>
 

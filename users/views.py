@@ -1671,6 +1671,7 @@ def student_create_order(request):
     fulfillment_type = request.POST.get('fulfillment_type', Order.FulfillmentType.DELIVERY).strip()
     payment_method = request.POST.get('payment_method', Order.PaymentMethod.RAZORPAY).strip()
     delivery_address = request.POST.get('delivery_address', '').strip()
+    upi_id = request.POST.get('upi_id', '').strip()  # Optional UPI ID for payment request
 
     valid_fulfillment_types = {choice[0] for choice in Order.FulfillmentType.choices}
     valid_payment_methods = {choice[0] for choice in Order.PaymentMethod.choices}
@@ -1715,10 +1716,19 @@ def student_create_order(request):
             return JsonResponse({'error': 'Payment gateway not configured'}, status=500)
 
         try:
+            # Generate unique receipt for QR code generation (required by Razorpay)
+            receipt_id = f"ORD-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
+            
             razorpay_order = razorpay_client.order.create({
                 'amount': int(total_amount * 100),
                 'currency': 'INR',
+                'receipt': receipt_id,  # Required for QR code generation
                 'payment_capture': '1',
+                'timeout': 600,  # 10 minutes timeout for QR code
+                'notes': {
+                    'user_id': request.user.id,
+                    'student_email': request.user.email,
+                }
             })
         except Exception as e:
             return JsonResponse({'error': f'Failed to create payment order: {str(e)}'}, status=500)
@@ -1800,6 +1810,7 @@ def student_create_order(request):
                     amount=order.total_amount,
                     currency='INR',
                     status=Payment.PaymentStatus.PENDING,
+                    upi_id=upi_id,  # Store user's UPI ID if provided
                 )
 
     if payment_method == Order.PaymentMethod.COD:
