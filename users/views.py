@@ -1716,37 +1716,41 @@ def student_create_order(request):
     
     razorpay_order = None
     if payment_method == Order.PaymentMethod.RAZORPAY:
-        try:
-            razorpay_client = razorpay.Client(
-                auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-            )
-        except Exception:
-            return JsonResponse({'error': 'Payment gateway not configured'}, status=500)
-
-        try:
-            # Generate unique receipt for QR code generation (required by Razorpay)
-            receipt_id = f"ORD-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
-            
-            razorpay_order = razorpay_client.order.create({
+        # Check if using test keys (test mode)
+        is_test_mode = settings.RAZORPAY_KEY_ID.startswith('rzp_test_') if settings.RAZORPAY_KEY_ID else False
+        
+        if is_test_mode or settings.DEBUG:
+            # In test mode or DEBUG mode, always create mock order for testing
+            razorpay_order = {
+                'id': f'order_test_{timezone.now().strftime("%Y%m%d%H%M%S%f")}',
                 'amount': int(total_amount * 100),
                 'currency': 'INR',
-                'receipt': receipt_id,  # Required for QR code generation
-                'payment_capture': '1',
-                'notes': {
-                    'user_id': request.user.id,
-                    'student_email': request.user.email,
-                }
-            })
-        except Exception as e:
-            # In DEBUG mode, create a mock Razorpay order for testing
-            if settings.DEBUG:
-                razorpay_order = {
-                    'id': f'order_test_{timezone.now().strftime("%Y%m%d%H%M%S%f")}',
+                'receipt': f"ORD-{timezone.now().strftime('%Y%m%d%H%M%S%f')}",
+            }
+        else:
+            # Production mode: try to create real order via Razorpay API
+            try:
+                razorpay_client = razorpay.Client(
+                    auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+                )
+            except Exception:
+                return JsonResponse({'error': 'Payment gateway not configured'}, status=500)
+
+            try:
+                # Generate unique receipt for QR code generation (required by Razorpay)
+                receipt_id = f"ORD-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
+                
+                razorpay_order = razorpay_client.order.create({
                     'amount': int(total_amount * 100),
                     'currency': 'INR',
-                    'receipt': f"ORD-{timezone.now().strftime('%Y%m%d%H%M%S%f')}",
-                }
-            else:
+                    'receipt': receipt_id,  # Required for QR code generation
+                    'payment_capture': '1',
+                    'notes': {
+                        'user_id': request.user.id,
+                        'student_email': request.user.email,
+                    }
+                })
+            except Exception as e:
                 return JsonResponse({'error': f'Failed to create payment order: {str(e)}'}, status=500)
     
     
@@ -1874,8 +1878,11 @@ def student_verify_payment(request):
     if not all([razorpay_order_id, razorpay_payment_id, razorpay_signature]):
         return JsonResponse({'error': 'Missing payment details'}, status=400)
     
-    # Verify payment signature (skip in DEBUG mode for test payments)
-    if not settings.DEBUG:
+    # Check if in test/debug mode
+    is_test_mode = settings.RAZORPAY_KEY_ID.startswith('rzp_test_') if settings.RAZORPAY_KEY_ID else False
+    
+    # Verify payment signature (skip in DEBUG mode or test mode)
+    if not (settings.DEBUG or is_test_mode):
         try:
             razorpay_client = razorpay.Client(
                 auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
