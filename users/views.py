@@ -1988,6 +1988,80 @@ def student_cancel_payment(request):
 
 
 @login_required
+@require_http_methods(["POST"])
+def student_bypass_payment(request):
+    """Bypass payment verification in DEBUG mode - for testing only."""
+    if not settings.DEBUG:
+        return JsonResponse({'error': 'Only available in DEBUG mode'}, status=403)
+    
+    if request.user.role != User.Role.STUDENT:
+        return JsonResponse({'error': 'Unauthorized'}, status=403)
+    
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+    
+    order_ids = data.get('order_ids') or []
+    if not order_ids:
+        return JsonResponse({'error': 'No orders provided'}, status=400)
+    
+    try:
+        # Get all pending orders for this student
+        orders = Order.objects.filter(
+            student=request.user,
+            id__in=order_ids,
+            payment_status=Order.PaymentStatus.PENDING,
+        )
+        
+        if not orders:
+            return JsonResponse({'error': 'No pending orders found'}, status=404)
+        
+        # Create/update payment records
+        for order in orders:
+            payment, created = Payment.objects.get_or_create(
+                order=order,
+                defaults={
+                    'student': request.user,
+                    'amount': order.total_amount,
+                    'currency': 'INR',
+                    'status': Payment.PaymentStatus.PENDING,
+                }
+            )
+            
+            payment.razorpay_order_id = f'bypass_test_{timezone.now().strftime("%Y%m%d%H%M%S%f")}'
+            payment.razorpay_payment_id = 'bypass_payment'
+            payment.razorpay_signature = 'bypass_signature'
+            payment.status = Payment.PaymentStatus.SUCCESS
+            payment.save()
+            
+            # Mark order as paid
+            order.payment_status = Order.PaymentStatus.COMPLETED
+            order.save()
+            
+            # Send notification
+            _notify_user(
+                request.user,
+                order,
+                f"Payment successful! Your order {order.order_code} has been placed.",
+                email_subject='Payment Successful',
+            )
+        
+        # Clear cart
+        cart = Cart.objects.filter(student=request.user).first()
+        if cart:
+            cart.items.all().delete()
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{len(orders)} order(s) marked as paid successfully',
+        })
+    
+    except Exception as e:
+        return JsonResponse({'error': f'Payment bypass failed: {str(e)}'}, status=500)
+
+
+@login_required
 def student_orders(request):
     """Display all orders for the student."""
     if request.user.role != User.Role.STUDENT:
