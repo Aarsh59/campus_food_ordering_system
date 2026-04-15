@@ -1730,7 +1730,17 @@ def student_create_order(request):
                 }
             })
         except Exception as e:
-            return JsonResponse({'error': f'Failed to create payment order: {str(e)}'}, status=500)
+            # In DEBUG mode, create a mock Razorpay order for testing
+            if settings.DEBUG:
+                razorpay_order = {
+                    'id': f'order_test_{timezone.now().strftime("%Y%m%d%H%M%S%f")}',
+                    'amount': int(total_amount * 100),
+                    'currency': 'INR',
+                    'receipt': f"ORD-{timezone.now().strftime('%Y%m%d%H%M%S%f')}",
+                }
+            else:
+                return JsonResponse({'error': f'Failed to create payment order: {str(e)}'}, status=500)
+    
     
     # Create master order record with payment info and reserve stock
     with transaction.atomic():
@@ -1856,18 +1866,19 @@ def student_verify_payment(request):
     if not all([razorpay_order_id, razorpay_payment_id, razorpay_signature]):
         return JsonResponse({'error': 'Missing payment details'}, status=400)
     
-    # Verify payment signature
-    try:
-        razorpay_client = razorpay.Client(
-            auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-        )
-        razorpay_client.utility.verify_payment_signature({
-            'razorpay_order_id': razorpay_order_id,
-            'razorpay_payment_id': razorpay_payment_id,
-            'razorpay_signature': razorpay_signature,
-        })
-    except Exception as e:
-        return JsonResponse({'error': f'Payment verification failed: {str(e)}'}, status=400)
+    # Verify payment signature (skip in DEBUG mode for test payments)
+    if not settings.DEBUG:
+        try:
+            razorpay_client = razorpay.Client(
+                auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+            )
+            razorpay_client.utility.verify_payment_signature({
+                'razorpay_order_id': razorpay_order_id,
+                'razorpay_payment_id': razorpay_payment_id,
+                'razorpay_signature': razorpay_signature,
+            })
+        except Exception as e:
+            return JsonResponse({'error': f'Payment verification failed: {str(e)}'}, status=400)
     
     # Update payment record
     try:
