@@ -110,6 +110,11 @@ function getSelectedPaymentMethod() {
     return selected ? selected.value : 'RAZORPAY';
 }
 
+function toggleUPISection() {
+    // Trigger sync after a brief delay to let radio button update
+    setTimeout(syncCheckoutModeUi, 50);
+}
+
 function syncCheckoutModeUi() {
     const fulfillmentType = getSelectedFulfillmentType();
     const paymentMethod = getSelectedPaymentMethod();
@@ -517,13 +522,14 @@ function initiatePayment(data) {
         theme: {
             color: '#ff6b00'
         },
-        // Enable payment methods
+        // Control which payment methods are displayed to users
+        // VPA (Virtual Payment Address) is part of the UPI method
         method: {
-            upi: true,
-            card: true,
-            wallet: true,
-            netbanking: true,
-            emandate: false
+            upi: true,         // ✅ UPI apps: Google Pay, PhonePe, BHIM, Paytm, etc.
+            card: true,        // ✅ Credit/Debit Cards
+            wallet: true,      // ✅ Mobile Wallets: Freecharge, PayZapp, etc.
+            netbanking: true,  // ✅ Net Banking (Direct bank transfers)
+            emandate: false    // ❌ E-mandate (Recurring payments)
         }
     };
     
@@ -995,13 +1001,13 @@ document.addEventListener('DOMContentLoaded', bindCheckoutOptions);
             <h5 class="mb-0">💳 Payment Method</h5>
         </div>
         <div class="card-body">
-            <label class="payment-method selected d-block">
+            <label class="payment-method selected d-block" onclick="toggleUPISection()">
                 <input class="form-check-input me-2" type="radio" name="payment_method" value="RAZORPAY" checked>
                 <div class="payment-icon">💳</div>
                 <strong>Razorpay Payment Gateway</strong>
-                <p class="text-muted mb-0">Secure payment via all major cards, UPI, and net banking</p>
+                <p class="text-muted mb-0">Secure payment via UPI, card, wallet, and net banking</p>
             </label>
-            <label class="payment-method d-block mb-0">
+            <label class="payment-method d-block mb-0" onclick="toggleUPISection()">
                 <input class="form-check-input me-2" type="radio" name="payment_method" value="COD">
                 <div class="payment-icon">💵</div>
                 <strong>Cash on Delivery</strong>
@@ -1009,33 +1015,52 @@ document.addEventListener('DOMContentLoaded', bindCheckoutOptions);
             </label>
         </div>
 
-        <!-- UPI Payment Options -->
-        <div id="upi-options-section" class="mt-4 p-3 bg-light rounded" style="display: none;">
-            <h6 class="mb-3">📱 UPI Payment Options</h6>
+        <!-- UPI VPA Payment Options (Razorpay) -->
+        <div id="upi-options-section" class="mt-4 p-3 bg-light rounded">
+            <h6 class="mb-3">📱 UPI Virtual Payment Address (VPA)</h6>
+            <p class="text-muted mb-3">Add your UPI ID to get a instant payment request on your phone from Google Pay, PhonePe, BHIM, or any UPI app</p>
+            
             <div class="row">
-                <div class="col-md-6 mb-3">
+                <div class="col-md-8 mb-3">
                     <label for="upi-id-input" class="form-label">
-                        <strong>Enter Your UPI ID</strong>
-                        <small class="text-muted d-block">(Optional - You'll receive a payment request)</small>
+                        <strong>Your UPI ID (VPA)</strong>
+                        <small class="text-muted d-block">(Optional - Leave blank to use QR code)</small>
                     </label>
                     <input 
                         type="text" 
                         id="upi-id-input" 
-                        class="form-control" 
-                        placeholder="example@oksbi or example@paytm"
-                        value="aarsh.kaushik123@oksbi"
+                        class="form-control form-control-lg" 
+                        placeholder="yourname@oksbi"
+                        autocomplete="off"
                     >
-                    <small class="text-muted d-block mt-2">Format: yourname@bankname (e.g., aarsh.kaushik123@oksbi)</small>
+                    <small class="text-muted d-block mt-2">
+                        <strong>Format:</strong> yourname@bankname<br>
+                        <strong>Examples:</strong> aarsh.kaushik@oksbi | john@paytm | rahul@ybl
+                    </small>
                 </div>
-                <div class="col-md-6 mb-3">
+                <div class="col-md-4">
                     <label class="form-label">
-                        <strong>Or Scan QR Code</strong>
+                        <strong>Which Banks?</strong>
                     </label>
-                    <p class="text-muted">You can also choose "QR Code" in the payment modal and scan with Google Pay or any UPI app.</p>
+                    <div style="font-size: 0.9rem; line-height: 1.6;">
+                        ✅ <strong>HDFC:</strong> @hdfc<br>
+                        ✅ <strong>ICICI:</strong> @icici<br>
+                        ✅ <strong>SBI:</strong> @oksbi<br>
+                        ✅ <strong>Axis:</strong> @axl<br>
+                        ✅ <strong>Paytm:</strong> @paytm<br>
+                        ✅ <strong>Google Pay:</strong> @okhdfcbank
+                    </div>
                 </div>
             </div>
-            <div class="alert alert-info mb-0" style="font-size: 0.9rem;">
-                <strong>💡 Tip:</strong> Enter your UPI ID to receive a direct payment request on your UPI app, or leave it empty to scan the QR code instead.
+
+            <!-- Payment Methods Info -->
+            <div class="alert alert-info mb-0" style="font-size: 0.9rem; margin-top: 15px;">
+                <strong>💡 How it works:</strong>
+                <ul class="mb-0 mt-2">
+                    <li><strong>Option 1:</strong> Enter your UPI ID → Get instant payment request on your phone app</li>
+                    <li><strong>Option 2:</strong> Leave empty → Scan the QR code shown in the payment modal</li>
+                    <li><strong>Option 3:</strong> Use card, wallet, or net banking from the payment modal</li>
+                </ul>
             </div>
         </div>
     </div>
