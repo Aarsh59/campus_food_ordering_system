@@ -183,8 +183,18 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # ─── Media Files (uploads) ────────────────────────────────────────────────────
 # Use Railway persistent volumes - no AWS needed
+# Check for Railway persistent volume mount, otherwise use local media directory
 MEDIA_URL  = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# For Railway: mount the persistent volume at /app/media
+# For local development: creates media/ folder in project root
+_media_root_env = os.getenv('MEDIA_ROOT', '')
+if _media_root_env:
+    MEDIA_ROOT = _media_root_env
+else:
+    MEDIA_ROOT = BASE_DIR / 'media'
+    
+# Ensure MEDIA_ROOT directory exists
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 # ─── Campus Settings ──────────────────────────────────────────────────────────
 ALLOWED_EMAIL_DOMAIN = '@iitk.ac.in'  # replace with your college domain

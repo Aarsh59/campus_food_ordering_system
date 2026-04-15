@@ -264,6 +264,11 @@ class VendorProfile(models.Model):
 
     def __str__(self):
         return self.outlet_name or self.user.username
+    
+    @property
+    def active_items_count(self):
+        """Return count of active menu items only."""
+        return self.menu_items.filter(is_active=True).count()
 
 
 class MenuItem(models.Model):
@@ -359,6 +364,9 @@ class Order(models.Model):
 
     # optional: a human-friendly order code (useful in UIs)
     order_code = models.CharField(max_length=30, unique=True, blank=True, default='')
+    
+    # Track if stock has been restored to prevent double restoration on order cancellation
+    stock_restored = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-created_at']

@@ -222,11 +222,19 @@ def _validate_menu_item_quantity(menu_item, quantity):
 
 def _restore_order_item_stock(order):
     """Return reserved stock for an order back to its menu items."""
+    # Prevent double restoration of stock
+    if order.stock_restored:
+        return
+    
     for order_item in order.items.select_related('vendor_item'):
         if order_item.vendor_item_id:
             menu_item = order_item.vendor_item
             menu_item.stock += order_item.quantity
             menu_item.save(update_fields=['stock'])
+    
+    # Mark stock as restored
+    order.stock_restored = True
+    order.save(update_fields=['stock_restored'])
 
 
 def _cancel_pending_checkout_orders(student, cancellation_reason, order_ids=None, razorpay_order_id=None):
